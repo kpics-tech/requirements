@@ -1411,6 +1411,8 @@ function resetIdleTimer(){
   document.addEventListener(ev, resetIdleTimer, {passive:true})
 );
 resetIdleTimer();
+
+_supabase.auth.onAuthStateChange(async (event, session) => {
   if(session&&session.user){
     const user=session.user;
     const {data:profile}=await _supabase.from('profiles').select('*').eq('id',user.id).single();
