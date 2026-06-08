@@ -719,11 +719,8 @@ function updateSimpleDate(domainId,di,val){
     ? `<span class="sbadge s-pa">✓ ${filled}回練習済み</span>`
     : `<span class="sbadge s-un">あと${3-filled}日入力で完了</span>`;
   updateDomainMeta(domainId);
-  // DB保存
-  _supabase.from('practice_dates').upsert({
-    uid, domain_id:domainId, subject_idx:0, date_idx:di,
-    practice_date:val||null, updated_at:new Date().toISOString(),
-  },{onConflict:'uid,domain_id,subject_idx,date_idx'}).catch(()=>{});
+  // DB保存（エラーをきちんと表示する）
+  savePracticeDateToDB(uid, domainId, 0, di, val);
 }
 
 
@@ -1611,12 +1608,11 @@ async function saveSubjectNameToDB(uid,domainId,si,name){
   },{onConflict:'uid,domain_id,subject_idx'});
 }
 async function savePracticeDateToDB(uid,domainId,si,di,dateVal){
-  try {
-    await _supabase.from('practice_dates').upsert({
-      uid, domain_id:domainId, subject_idx:si, date_idx:di, practice_date:dateVal||null,
-      updated_at:new Date().toISOString(),
-    },{onConflict:'uid,domain_id,subject_idx,date_idx'});
-  } catch(e){ /* テーブル未作成の場合は無視 */ }
+  const {error}=await _supabase.from('practice_dates').upsert({
+    uid, domain_id:domainId, subject_idx:si, date_idx:di, practice_date:dateVal||null,
+    updated_at:new Date().toISOString(),
+  },{onConflict:'uid,domain_id,subject_idx,date_idx'});
+  if(error) showToast('練習日の保存に失敗しました: '+error.message,'error');
 }
 async function loadFromDB(){
   showToast('データを読み込み中...','loading');
