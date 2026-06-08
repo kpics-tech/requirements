@@ -1322,7 +1322,7 @@ async function reviewSet(uid,domainId,si,viewId,status){
 // ENTRY
 // ================================================================
 document.getElementById("entry-btn").addEventListener("click",()=>{
-  if(canEntry(window.CURRENT_UID)) alert("🎉 認定試験へのエントリーが完了しました！\n\n2026年8月2日（日）の認定試験に参加できます。");
+  if(canEntry(window.CURRENT_UID)) triggerCelebration(window.CURRENT_UID);
 });
 
 // ================================================================
