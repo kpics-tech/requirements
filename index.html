@@ -1316,10 +1316,15 @@ function renderReviewDomains(uid){
             </div>
           </div>`;
       }).join("");
+      const captureDate = prog.subjects[si].name || "";
+      const captureDateHTML = captureDate
+        ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">撮像日：<span style="color:var(--orange);font-weight:700;">${captureDate}</span></div>`
+        : `<div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">撮像日：未入力</div>`;
       const practiceHTML=renderPracticeDatesReadonlyHTML(prog.subjects[si].practiceDates);
       return `<div id="rvpanel-${uid}-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
-        ${practiceHTML}
+        ${captureDateHTML}
         <div class="rev-img-grid">${viewsHTML}</div>
+        ${practiceHTML}
       </div>`;
     }).join("");
 
