@@ -280,6 +280,7 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <button class="nav-tab active" id="nav-member-tab" onclick="showPage('member')">部員</button>
       <button class="nav-tab" id="nav-reviewer-tab" onclick="showPage('reviewer')">確認者</button>
       <button class="nav-tab" id="nav-matrix-tab" onclick="showPage('matrix')" style="display:none;">一覧表</button>
+      <button class="nav-tab" id="nav-examday-tab" onclick="showPage('examday')" style="display:none;">本番試験</button>
       <button onclick="doLogout()" style="padding:5px 10px;font-size:11px;font-weight:600;border:1px solid var(--border-light);border-radius:2px;background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap;">ログアウト</button>
     </div>
   </div>
@@ -324,6 +325,8 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <button id="entry-btn" class="entry-btn" disabled>⚑ &nbsp; 8/2 認定試験にエントリー</button>
       <div id="entry-hint" style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:7px;"></div>
     </div>
+
+    <div id="exam-result-card" style="display:none;margin-top:22px;"></div>
   </div>
 </div>
 
@@ -374,6 +377,30 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       </div>
     </div>
     <div id="matrix-container" style="overflow-x:auto;"></div>
+  </div>
+</div>
+
+<!-- ===================== EXAM DAY PAGE（確認者専用・当日実技チェック） ===================== -->
+<div id="page-examday" class="page">
+  <div class="main">
+    <div style="margin-bottom:14px;">
+      <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;">確認者モード</div>
+      <div style="font-size:18px;font-weight:700;">認定試験 当日評価</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">受験者を選択し、実技を見ながらその場でチェックしてください。全項目チェックで合格・バッジ贈呈となります。</div>
+    </div>
+    <div class="member-grid" id="examday-member-list"></div>
+
+    <div id="examday-booth-area" style="display:none;margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div>
+          <div id="examday-name" style="font-size:16px;font-weight:700;"></div>
+          <div style="font-size:11px;color:var(--text-muted);">ブースを選んでください</div>
+        </div>
+        <button onclick="closeExamDay()" style="font-size:11px;background:var(--card);border:1px solid var(--border-light);color:var(--text-muted);padding:5px 11px;border-radius:2px;cursor:pointer;">← 受験者一覧へ戻る</button>
+      </div>
+      <div id="examday-booth-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+      <div id="examday-checklist"></div>
+    </div>
   </div>
 </div>
 
@@ -466,6 +493,168 @@ const REFS = {
 };
 
 // ================================================================
+// 認定試験 当日チェックリスト（確認者が実技を見ながらチェックする項目）
+// ================================================================
+const EXAM_BOOTHS = [
+  {
+    id:"booth_abdomen", name:"①腹部ブース", icon:"🫁",
+    common:[
+      {id:"c1", label:"プローブを当てる前に声がけができる"},
+      {id:"c2", label:"適切なプローブ・プリセットを選択できる"},
+    ],
+    sections:[
+      {id:"fast_epi", name:"FAST－心窩部", items:[
+        {id:"d1", label:"扇動走査で心膜面全体を描出できる"},
+        {id:"d2", label:"必要時に深吸気を活用できる"},
+        {id:"e1", label:"心膜液の有無を評価できる（心膜液貯留なしとコメントできる）"},
+      ]},
+      {id:"fast_morison", name:"FAST－モリソン窩", items:[
+        {id:"d1", label:"扇動走査でモリソン窩を描出できる"},
+        {id:"d2", label:"呼吸指示でCurtain signを描出できる"},
+        {id:"e1", label:"モリソン窩の腹水の有無を評価できる（モリソン窩に腹水なしとコメントできる）"},
+        {id:"e2", label:"胸水の有無を評価できる（Curtain signがあるので胸水なしとコメントできる）"},
+      ]},
+      {id:"fast_spleen", name:"FAST－脾周囲", items:[
+        {id:"d1", label:"扇動走査で脾周囲を描出できる"},
+        {id:"d2", label:"呼吸でCurtain signを描出できる"},
+        {id:"e1", label:"脾周囲の腹水の有無を評価できる（脾周囲に腹水なしとコメントできる）"},
+        {id:"e2", label:"胸水の有無を評価できる（Curtain signがあるので胸水なしとコメントできる）"},
+      ]},
+      {id:"aorta", name:"腹部大動脈", items:[
+        {id:"d1", label:"横断像で腹部大動脈を描出できる"},
+        {id:"d2", label:"心窩部から総腸骨動脈分岐部まで連続して描出できる"},
+        {id:"e1", label:"腹部大動脈瘤（AAA）の有無を評価できる（腹部大動脈瘤なしとコメントできる）"},
+        {id:"e2", label:"大動脈解離内膜（Intimal flap）の有無を評価できる（解離内膜なしとコメントできる）"},
+        {id:"e3", label:"総腸骨動脈分岐部まで観察できている"},
+      ]},
+      {id:"gallbladder", name:"胆嚢", items:[
+        {id:"d1", label:"扇動走査で胆嚢全体（端から端まで）を描出できる"},
+        {id:"d2", label:"必要時に左側臥位・深吸気を活用できる"},
+        {id:"e1", label:"胆嚢腫大（>40mm）の有無を評価できる（胆嚢腫大なしとコメントできる）"},
+        {id:"e2", label:"壁肥厚（>4mm）の有無を評価できる（壁肥厚なしとコメントできる）"},
+        {id:"e3", label:"結石の有無を評価できる（結石なしとコメントできる）"},
+      ]},
+      {id:"kidney_r", name:"腎臓（右）", items:[
+        {id:"d1", label:"扇動走査で腎長軸像を描出できる"},
+        {id:"e1", label:"腎盂拡大（水腎症）の有無を評価できる（腎盂拡大なしとコメントできる）"},
+      ]},
+      {id:"kidney_l", name:"腎臓（左）", items:[
+        {id:"d1", label:"扇動走査で腎長軸像を描出できる"},
+        {id:"e1", label:"腎盂拡大（水腎症）の有無を評価できる（腎盂拡大なしとコメントできる）"},
+      ]},
+    ]
+  },
+  {
+    id:"booth_cardiac", name:"②心臓ブース（FoCUS）", icon:"❤️",
+    common:[
+      {id:"c1", label:"プローブを当てる前に声がけができる"},
+      {id:"c2", label:"適切なプローブ・プリセットを選択できる"},
+    ],
+    sections:[
+      {id:"ivc", name:"心窩部IVC", items:[
+        {id:"d1", label:"心窩部IVCをIVCが最も太い部位で描出できる"},
+        {id:"d2", label:"右房合流部を描出できる"},
+        {id:"d3", label:"プローブの向きが正しい（左－尾側、右－頭側）"},
+        {id:"e1", label:"IVC径を評価できる（IVC拡大なしとコメントできる）"},
+        {id:"e2", label:"IVC径を評価できる（IVC虚脱なしとコメントできる）"},
+        {id:"e3", label:"呼吸性変動を評価できる（呼吸性変動ありとコメントできる）"},
+      ]},
+      {id:"s4c", name:"心窩部四腔像", items:[
+        {id:"d1", label:"心窩部四腔像を描出できる"},
+        {id:"d2", label:"心窩部から心膜面を描出できる"},
+        {id:"d3", label:"必要時に深吸気を活用できる"},
+        {id:"e1", label:"心膜液の有無を評価できる（心膜液なしとコメントできる）"},
+        {id:"e2", label:"左右心室のバランスを評価できる（右室：左室＝2：3に問題なしとコメントできる）"},
+      ]},
+      {id:"plax", name:"傍胸骨左室長軸像", items:[
+        {id:"d1", label:"左房・左室・大動脈を描出できる"},
+        {id:"e1", label:"心膜液の有無を評価できる（心膜液なしとコメントできる）"},
+        {id:"e2", label:"左室収縮能を評価できる（左室収縮に問題なしとコメントできる）"},
+        {id:"e3", label:"左室拡大の有無を評価できる（左室拡大なしとコメントできる）"},
+      ]},
+      {id:"psax", name:"傍胸骨左室短軸像", items:[
+        {id:"d1", label:"乳頭筋レベルで円形に描出できる"},
+        {id:"e1", label:"心膜液の有無を評価できる（心膜液なしとコメントできる）"},
+        {id:"e2", label:"左室収縮能を評価できる（左室収縮に問題なしとコメントできる）"},
+        {id:"e3", label:"D-shapeの有無を評価できる（D-shapeなし〈右室拡大なし〉とコメントできる）"},
+      ]},
+      {id:"a4c", name:"心尖部四腔像", items:[
+        {id:"d1", label:"心尖部四腔像を描出できる（斜めギリでもよし）"},
+        {id:"e1", label:"心膜液の有無を評価できる（心膜液なしとコメントできる）"},
+        {id:"e2", label:"左室収縮能を評価できる（左室収縮に問題なしとコメントできる）"},
+        {id:"e3", label:"左右心室のバランスを評価できる（右室：左室＝2：3に問題なしとコメントできる）"},
+      ]},
+    ]
+  },
+  {
+    id:"booth_lung_vessel", name:"③肺・血管ブース", icon:"🔬",
+    common:[
+      {id:"c1", label:"プローブを当てる前に声がけができる"},
+      {id:"c2", label:"適切なプローブ・プリセットを選択できる"},
+    ],
+    sections:[
+      {id:"lung_ra", name:"肺－右前胸部上部", items:[
+        {id:"d1", label:"バッドサインを描出できる"},
+        {id:"d2", label:"胸膜ラインを描出できる"},
+        {id:"d3", label:"Lung slidingを描出できる"},
+        {id:"e1", label:"Lung slidingを評価できる（Lung slidingありとコメントできる）"},
+        {id:"e2", label:"B lineの有無を評価できる（B lineなしとコメントできる）"},
+        {id:"e3", label:"胸水の評価ができる（胸水なしとコメントできる）"},
+      ]},
+      {id:"lung_la", name:"肺－左前胸部上部", items:[
+        {id:"d1", label:"バッドサインを描出できる"},
+        {id:"d2", label:"胸膜ラインを描出できる"},
+        {id:"d3", label:"Lung slidingを描出できる"},
+        {id:"e1", label:"Lung slidingを評価できる（Lung slidingありとコメントできる）"},
+        {id:"e2", label:"B lineの有無を評価できる（B lineなしとコメントできる）"},
+        {id:"e3", label:"胸水の評価ができる（胸水なしとコメントできる）"},
+      ]},
+      {id:"lung_rb", name:"肺－右側胸部下部", items:[
+        {id:"d1", label:"バッドサインを描出できる"},
+        {id:"d2", label:"胸膜ラインを描出できる"},
+        {id:"d3", label:"Lung slidingを描出できる"},
+        {id:"d4", label:"呼吸指示をして右側（肝臓側）のCurtain signを描出できる（肝臓と肺が両方見える高さで）"},
+        {id:"e1", label:"Lung slidingを評価できる（Lung slidingありとコメントできる）"},
+        {id:"e2", label:"B lineの有無を評価できる（B lineなしとコメントできる）"},
+        {id:"e3", label:"胸水の有無を評価できる（Curtain signがあるので胸水なしとコメントできる）"},
+      ]},
+      {id:"lung_lb", name:"肺－左側胸部下部", items:[
+        {id:"d1", label:"バッドサインを描出できる"},
+        {id:"d2", label:"胸膜ラインを描出できる"},
+        {id:"d3", label:"Lung slidingを描出できる"},
+        {id:"d4", label:"呼吸指示をして左側（脾臓側）のCurtain signを描出できる（脾臓と肺が両方見える高さで）"},
+        {id:"e1", label:"Lung slidingを評価できる（Lung slidingありとコメントできる）"},
+        {id:"e2", label:"B lineの有無を評価できる（B lineなしとコメントできる）"},
+        {id:"e3", label:"胸水の有無を評価できる（Curtain signがあるので胸水なしとコメントできる）"},
+      ]},
+      {id:"dvt", name:"膝窩静脈", items:[
+        {id:"d1", label:"膝窩静脈を描出できる"},
+        {id:"d2", label:"圧迫走査による静脈の虚脱を描出できる"},
+        {id:"e1", label:"血栓の有無を評価できる（膝窩静脈に血栓なしとコメントできる）"},
+      ]},
+      {id:"puncture", name:"USガイド下血管穿刺（交差法）※Student Doctorのみ対象", studentDoctorOnly:true, items:[
+        {id:"d1", label:"シュミレーター内の血管を短軸像で描出できる"},
+        {id:"e1", label:"刺入から数mm進めるまで穿刺部を確認している"},
+        {id:"e2", label:"「針先を消す→描出」を繰り返しながら穿刺できる"},
+        {id:"e3", label:"血管内へ正しく穿刺できる"},
+        {id:"e4", label:"プローブと針を安定して保持できる"},
+      ]},
+    ]
+  },
+];
+
+// 学年に応じて対象となるチェック項目一覧を返す（穿刺セクションはStudent Doctorのみ）
+function examBoothItems(booth, memberYear){
+  const isSD = (memberYear||0) >= 5;
+  const items = booth.common.map(i => ({key:`common__${i.id}`, sectionName:"共通項目", label:i.label}));
+  booth.sections.forEach(sec => {
+    if(sec.studentDoctorOnly && !isSD) return;
+    sec.items.forEach(i => items.push({key:`${sec.id}__${i.id}`, sectionName:sec.name, label:i.label}));
+  });
+  return items;
+}
+
+// ================================================================
 // STATE
 // ================================================================
 const MEMBERS = [
@@ -554,6 +743,42 @@ function domainPassCount(uid,domainId){
   let n=0, total=d.views.length*3;
   PROGRESS[uid]?.[domainId]?.subjects.forEach(s => d.views.forEach(v => { if(s.views[v.id]?.status==="pass") n++; }));
   return {n, total};
+}
+
+// ================================================================
+// 認定試験 当日チェック結果（確認者が入力する）
+// EXAM_RESULTS[uid][boothId] = { items:{itemKey:bool}, comment:string }
+// ================================================================
+const EXAM_RESULTS = {};
+function initExamResults(){
+  MEMBERS.forEach(m => {
+    if(!EXAM_RESULTS[m.uid]) EXAM_RESULTS[m.uid]={};
+    EXAM_BOOTHS.forEach(b => {
+      if(!EXAM_RESULTS[m.uid][b.id]) EXAM_RESULTS[m.uid][b.id]={items:{},comment:""};
+    });
+  });
+}
+function examMemberYear(uid){
+  return MEMBERS.find(m=>m.uid===uid)?.year || 0;
+}
+function examBoothPassed(uid, boothId){
+  const booth=EXAM_BOOTHS.find(b=>b.id===boothId);
+  const items=examBoothItems(booth, examMemberYear(uid));
+  const result=EXAM_RESULTS[uid]?.[boothId];
+  if(!result) return false;
+  return items.length>0 && items.every(i => result.items[i.key]===true);
+}
+function examAllPassed(uid){
+  return EXAM_BOOTHS.every(b => examBoothPassed(uid, b.id));
+}
+function examHasAnyRecord(uid){
+  const r=EXAM_RESULTS[uid];
+  if(!r) return false;
+  return EXAM_BOOTHS.some(b => {
+    const br=r[b.id];
+    if(!br) return false;
+    return Object.values(br.items).some(v=>v===true) || (br.comment||"").trim()!=="";
+  });
 }
 
 // ================================================================
@@ -1073,10 +1298,12 @@ function showPage(page){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById(`page-${page}`).classList.add("active");
   document.querySelectorAll(".nav-tab").forEach(t=>t.classList.remove("active"));
-  const tabMap={member:"nav-member-tab",reviewer:"nav-reviewer-tab",matrix:"nav-matrix-tab"};
+  const tabMap={member:"nav-member-tab",reviewer:"nav-reviewer-tab",matrix:"nav-matrix-tab",examday:"nav-examday-tab"};
   if(tabMap[page]) document.getElementById(tabMap[page])?.classList.add("active");
   if(page==="reviewer") renderMemberList();
   if(page==="matrix") renderMatrix();
+  if(page==="examday") renderExamDayMemberList();
+  if(page==="member") renderExamResultCard();
 }
 
 // ================================================================
@@ -1204,6 +1431,210 @@ function renderMatrix(){
     </table>`;
 }
 
+
+// ================================================================
+// EXAM DAY PAGE（確認者専用・当日実技チェック）
+// ================================================================
+let _examCurrentUid=null, _examCurrentBooth=null;
+
+function renderExamDayMemberList(){
+  const container=document.getElementById("examday-member-list");
+  container.innerHTML="";
+  MEMBERS.forEach(m=>{
+    const passedCount=EXAM_BOOTHS.filter(b=>examBoothPassed(m.uid,b.id)).length;
+    const certified=examAllPassed(m.uid);
+    const div=document.createElement("div");
+    div.className="member-card";
+    div.onclick=()=>selectExamMember(m.uid);
+    div.innerHTML=`
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-size:14px;font-weight:700;">${m.name}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${m.year}年生</div>
+        </div>
+        ${certified
+          ? `<span class="done-badge">🏅 認定合格</span>`
+          : `<span style="font-size:10px;color:var(--text-dim);">${passedCount}/${EXAM_BOOTHS.length} ブース合格</span>`}
+      </div>`;
+    container.appendChild(div);
+  });
+}
+
+function selectExamMember(uid){
+  _examCurrentUid=uid;
+  _examCurrentBooth=null;
+  const m=MEMBERS.find(x=>x.uid===uid);
+  document.getElementById("examday-name").textContent=m?.name || "";
+  document.getElementById("examday-booth-area").style.display="";
+  renderExamBoothList();
+  document.getElementById("examday-checklist").innerHTML=`<div style="font-size:12px;color:var(--text-muted);padding:10px 2px;">↑ 上のブースを選んでチェックを開始してください</div>`;
+}
+
+function closeExamDay(){
+  _examCurrentUid=null;
+  _examCurrentBooth=null;
+  document.getElementById("examday-booth-area").style.display="none";
+  renderExamDayMemberList();
+}
+
+function renderExamBoothList(){
+  const container=document.getElementById("examday-booth-list");
+  const uid=_examCurrentUid;
+  container.innerHTML="";
+  EXAM_BOOTHS.forEach(b=>{
+    const passed=examBoothPassed(uid,b.id);
+    const btn=document.createElement("button");
+    btn.onclick=()=>selectExamBooth(b.id);
+    btn.style.cssText=`
+      display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:3px;cursor:pointer;
+      font-size:12px;font-weight:700;font-family:'Noto Sans JP',sans-serif;
+      border:1px solid ${passed?'var(--pass-border)':(_examCurrentBooth===b.id?'var(--orange)':'var(--border-light)')};
+      background:${passed?'var(--pass-bg)':(_examCurrentBooth===b.id?'var(--orange-bg)':'var(--card)')};
+      color:${passed?'var(--pass)':(_examCurrentBooth===b.id?'var(--orange)':'var(--text-muted)')};
+    `;
+    btn.innerHTML=`${b.icon} ${b.name} ${passed?'✓':''}`;
+    container.appendChild(btn);
+  });
+}
+
+function selectExamBooth(boothId){
+  _examCurrentBooth=boothId;
+  renderExamBoothList();
+  renderExamChecklist();
+}
+
+function renderExamChecklist(){
+  const uid=_examCurrentUid, boothId=_examCurrentBooth;
+  const booth=EXAM_BOOTHS.find(b=>b.id===boothId);
+  const container=document.getElementById("examday-checklist");
+  if(!uid || !booth){ container.innerHTML=""; return; }
+  const year=examMemberYear(uid);
+  const result=EXAM_RESULTS[uid][boothId];
+
+  let html=`<div style="background:var(--card);border:1px solid var(--border);border-radius:4px;padding:16px;">`;
+
+  // 共通項目
+  html+=`<div class="sec-label">共通項目</div>`;
+  booth.common.forEach(item=>{
+    const key=`common__${item.id}`;
+    html+=examChecklistRow(key,item.label,result.items[key]===true);
+  });
+
+  booth.sections.forEach(sec=>{
+    if(sec.studentDoctorOnly && !(year>=5)) return;
+    html+=`<div class="sec-label" style="margin-top:16px;">${sec.name}</div>`;
+    sec.items.forEach(item=>{
+      const key=`${sec.id}__${item.id}`;
+      html+=examChecklistRow(key,item.label,result.items[key]===true);
+    });
+  });
+
+  html+=`
+    <div class="sec-label" style="margin-top:16px;">確認者コメント（受験者へのフィードバック）</div>
+    <textarea id="examday-comment" class="field" style="width:100%;min-height:70px;resize:vertical;font-family:'Noto Sans JP',sans-serif;"
+      placeholder="良かった点・次回に向けたアドバイスなど" onblur="saveExamComment()">${result.comment||""}</textarea>
+  </div>`;
+
+  container.innerHTML=html;
+}
+
+function examChecklistRow(key,label,checked){
+  return `
+    <label style="display:flex;align-items:flex-start;gap:9px;padding:7px 2px;cursor:pointer;border-bottom:1px solid var(--border);">
+      <input type="checkbox" ${checked?'checked':''} onchange="toggleExamItem('${key}',this.checked)"
+        style="margin-top:2px;width:16px;height:16px;accent-color:var(--pass);cursor:pointer;flex-shrink:0;">
+      <span style="font-size:12.5px;color:${checked?'var(--pass)':'var(--text)'};line-height:1.5;">${label}</span>
+    </label>`;
+}
+
+async function toggleExamItem(key,checked){
+  const uid=_examCurrentUid, boothId=_examCurrentBooth;
+  if(!uid||!boothId) return;
+  const wasAllPassed=examAllPassed(uid);
+  EXAM_RESULTS[uid][boothId].items[key]=checked;
+  renderExamChecklist();
+  renderExamBoothList();
+  renderExamDayMemberList();
+  await saveExamItemToDB(uid,boothId,key,checked);
+  if(!wasAllPassed && examAllPassed(uid)){
+    showCertifiedBadge(uid);
+  }
+}
+
+async function saveExamComment(){
+  const uid=_examCurrentUid, boothId=_examCurrentBooth;
+  if(!uid||!boothId) return;
+  const val=document.getElementById("examday-comment").value;
+  EXAM_RESULTS[uid][boothId].comment=val;
+  await saveExamCommentToDB(uid,boothId,val);
+  showToast("コメントを保存しました","success");
+}
+
+// ================================================================
+// 部員ページ：認定試験 結果カード（試験後のみ表示）
+// ================================================================
+function renderExamResultCard(){
+  const uid=window.CURRENT_UID;
+  const container=document.getElementById("exam-result-card");
+  if(!container) return;
+  if(window.CURRENT_ROLE==='reviewer' || !uid || !examHasAnyRecord(uid)){
+    container.style.display="none";
+    container.innerHTML="";
+    return;
+  }
+  container.style.display="";
+  const certified=examAllPassed(uid);
+  let html=`
+    <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;">認定試験 結果</div>
+    ${certified?`<div style="background:var(--pass-bg);border:1px solid var(--pass-border);border-radius:4px;padding:14px;margin-bottom:12px;text-align:center;">
+      <div style="font-size:20px;font-weight:900;color:var(--pass);">🏅 K-PICS 認定合格！</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">おめでとうございます。全ブースの実技評価に合格しました。</div>
+    </div>`:''}`;
+
+  EXAM_BOOTHS.forEach(b=>{
+    const passed=examBoothPassed(uid,b.id);
+    const result=EXAM_RESULTS[uid][b.id];
+    const items=examBoothItems(b,examMemberYear(uid));
+    const doneCount=items.filter(i=>result.items[i.key]===true).length;
+    html+=`
+      <div class="domain-card" style="padding:12px 14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:13px;font-weight:700;">${b.icon} ${b.name}</div>
+          <span class="${passed?'done-badge':''}" style="font-size:10px;color:${passed?'':'var(--text-dim)'};">
+            ${passed?'✓ 合格':`${doneCount}/${items.length} 項目クリア`}
+          </span>
+        </div>
+        ${result.comment ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:8px;line-height:1.6;border-left:2px solid var(--orange);padding-left:9px;">${result.comment.replace(/</g,'&lt;')}</div>` : ''}
+      </div>`;
+  });
+  container.innerHTML=html;
+}
+
+function showCertifiedBadge(uid){
+  launchFireworks();
+  setTimeout(()=>{
+    const m=MEMBERS.find(x=>x.uid===uid);
+    const name=m?m.name:'受験者';
+    const overlay=document.createElement('div');
+    overlay.id='kp-certified-overlay';
+    overlay.style.cssText=`position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.88);backdrop-filter:blur(8px);
+      display:flex;align-items:center;justify-content:center;padding:20px;animation:kpFadeIn 0.4s ease-out;`;
+    overlay.innerHTML=`
+      <div style="max-width:420px;width:100%;text-align:center;animation:kpCardIn 0.5s ease-out;
+        background:linear-gradient(145deg,#141414 0%,#1e1e1e 50%,#141414 100%);
+        border:2px solid #E8A020;border-radius:8px;padding:34px 26px;
+        box-shadow:0 0 40px rgba(232,160,32,.35),0 20px 60px rgba(0,0,0,.6);animation:kpGlow 3s ease-in-out infinite;">
+        <div style="font-size:44px;margin-bottom:8px;">🏅</div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:.05em;color:var(--orange);">K-PICS CERTIFIED</div>
+        <div style="font-size:18px;font-weight:900;color:#F0F0F0;margin-top:8px;">${name} 様</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:8px;line-height:1.6;">全ブースの実技評価に合格しました。<br>認定おめでとうございます！</div>
+        <button onclick="document.getElementById('kp-certified-overlay').remove()"
+          style="margin-top:20px;background:var(--orange);color:var(--black);border:none;padding:9px 22px;border-radius:3px;font-weight:700;cursor:pointer;">閉じる</button>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.remove(); });
+  }, 300);
+}
 
 async function selectMember(uid){
   const member=MEMBERS.find(m=>m.uid===uid);
@@ -1654,6 +2085,22 @@ async function saveSeminarToDB(uid,domainId,seminarIdx){
   if(error) showToast('セミナー情報の保存に失敗しました','error');
 }
 
+async function saveExamItemToDB(uid,boothId,itemKey,checked){
+  try {
+    await _supabase.from('exam_checklist').upsert({
+      uid, booth_id:boothId, item_key:itemKey, checked,
+      checked_by:window.CURRENT_UID, updated_at:new Date().toISOString(),
+    },{onConflict:'uid,booth_id,item_key'});
+  } catch(e){ showToast('保存に失敗しました: '+e.message,'error'); }
+}
+async function saveExamCommentToDB(uid,boothId,comment){
+  try {
+    await _supabase.from('exam_feedback').upsert({
+      uid, booth_id:boothId, comment,
+      updated_by:window.CURRENT_UID, updated_at:new Date().toISOString(),
+    },{onConflict:'uid,booth_id'});
+  } catch(e){ showToast('保存に失敗しました: '+e.message,'error'); }
+}
 async function saveSubjectNameToDB(uid,domainId,si,name){
   await _supabase.from('subject_names').upsert({
     uid, domain_id:domainId, subject_idx:si, name, updated_at:new Date().toISOString(),
@@ -1760,6 +2207,7 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     document.getElementById('auth-screen').classList.remove('active');
     document.getElementById('nav-reviewer-tab').style.display = role==='reviewer' ? '' : 'none';
     document.getElementById('nav-matrix-tab').style.display = role==='reviewer' ? '' : 'none';
+    document.getElementById('nav-examday-tab').style.display = role==='reviewer' ? '' : 'none';
 
     // MEMBERSを構築
     if(role==='reviewer'){
@@ -1780,6 +2228,7 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     if(subEl)  subEl.textContent=`${year||'?'}年生 ・ ${role==='reviewer'?'確認者':'部員'}`;
 
     initProgress();
+    initExamResults();
     updateCountdown();
     setInterval(updateCountdown,60000);
 
@@ -1787,7 +2236,7 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     else { renderDomainList(); showPage('member'); }
 
     await loadFromDB();
-    if(role!=='reviewer') renderDomainList();
+    if(role!=='reviewer'){ renderDomainList(); renderExamResultCard(); }
     updateProgressBar();
     if(role==='reviewer'){ renderMemberList(); renderMatrix(); }
   } else {
@@ -1843,12 +2292,26 @@ async function loadFromDB(){
     let semQ=_supabase.from('seminar_attendance').select('*');
     let nmQ =_supabase.from('subject_names').select('*');
     let pdQ =_supabase.from('practice_dates').select('*');
+    let ecQ =_supabase.from('exam_checklist').select('*');
+    let efQ =_supabase.from('exam_feedback').select('*');
     if(role==='member'){
       subQ=subQ.eq('uid',uid); semQ=semQ.eq('uid',uid);
       nmQ=nmQ.eq('uid',uid);  pdQ=pdQ.eq('uid',uid);
+      ecQ=ecQ.eq('uid',uid);  efQ=efQ.eq('uid',uid);
     }
     let pDates=null;
     try { const pdRes=await pdQ; pDates=pdRes.data; } catch(e){ pDates=null; }
+    let examChecks=null, examFeedbacks=null;
+    try { const ecRes=await ecQ; examChecks=ecRes.data; } catch(e){ examChecks=null; }
+    try { const efRes=await efQ; examFeedbacks=efRes.data; } catch(e){ examFeedbacks=null; }
+    if(examChecks) examChecks.forEach(row=>{
+      if(!EXAM_RESULTS[row.uid]?.[row.booth_id]) return;
+      EXAM_RESULTS[row.uid][row.booth_id].items[row.item_key]=!!row.checked;
+    });
+    if(examFeedbacks) examFeedbacks.forEach(row=>{
+      if(!EXAM_RESULTS[row.uid]?.[row.booth_id]) return;
+      EXAM_RESULTS[row.uid][row.booth_id].comment=row.comment||"";
+    });
     const [subRes,semRes,nmRes]=await Promise.all([subQ,semQ,nmQ]);
     const submissions=subRes.data, seminars=semRes.data, names=nmRes.data;
     if(seminars) seminars.forEach(row=>{
