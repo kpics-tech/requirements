@@ -386,21 +386,23 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
     <div style="margin-bottom:14px;">
       <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;">確認者モード</div>
       <div style="font-size:18px;font-weight:700;">認定試験 当日評価</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">受験者を選択し、実技を見ながらその場でチェックしてください。全項目チェックで合格・バッジ贈呈となります。</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">受験者名をタップして、実技を見ながらその場でチェックしてください。全項目チェックで合格・バッジ贈呈となります。</div>
     </div>
     <div class="member-grid" id="examday-member-list"></div>
+  </div>
+</div>
 
-    <div id="examday-booth-area" style="display:none;margin-top:16px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div>
-          <div id="examday-name" style="font-size:16px;font-weight:700;"></div>
-          <div style="font-size:11px;color:var(--text-muted);">ブースを選んでください</div>
-        </div>
-        <button onclick="closeExamDay()" style="font-size:11px;background:var(--card);border:1px solid var(--border-light);color:var(--text-muted);padding:5px 11px;border-radius:2px;cursor:pointer;">← 受験者一覧へ戻る</button>
+<div class="popup-overlay" id="examday-modal-overlay" onclick="closeExamDayOutside(event)">
+  <div class="popup-box fade-up" style="max-width:640px;">
+    <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:13px;">
+      <div>
+        <div style="font-size:9px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;">本番試験チェック</div>
+        <div id="examday-name" style="font-size:17px;font-weight:700;"></div>
       </div>
-      <div id="examday-booth-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
-      <div id="examday-checklist"></div>
+      <button class="popup-close" onclick="closeExamDay()">✕</button>
     </div>
+    <div id="examday-booth-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div id="examday-checklist"></div>
   </div>
 </div>
 
@@ -1440,7 +1442,12 @@ let _examCurrentUid=null, _examCurrentBooth=null;
 function renderExamDayMemberList(){
   const container=document.getElementById("examday-member-list");
   container.innerHTML="";
-  MEMBERS.forEach(m=>{
+  const eligible=MEMBERS.filter(m=>canEntry(m.uid));
+  if(eligible.length===0){
+    container.innerHTML=`<div style="font-size:12px;color:var(--text-muted);padding:10px 2px;">エントリー資格（キー画像 全Pass＋セミナー受講完了）のある部員がまだいません。</div>`;
+    return;
+  }
+  eligible.forEach(m=>{
     const passedCount=EXAM_BOOTHS.filter(b=>examBoothPassed(m.uid,b.id)).length;
     const certified=examAllPassed(m.uid);
     const div=document.createElement("div");
@@ -1465,16 +1472,19 @@ function selectExamMember(uid){
   _examCurrentBooth=null;
   const m=MEMBERS.find(x=>x.uid===uid);
   document.getElementById("examday-name").textContent=m?.name || "";
-  document.getElementById("examday-booth-area").style.display="";
   renderExamBoothList();
   document.getElementById("examday-checklist").innerHTML=`<div style="font-size:12px;color:var(--text-muted);padding:10px 2px;">↑ 上のブースを選んでチェックを開始してください</div>`;
+  document.getElementById("examday-modal-overlay").classList.add("open");
 }
 
 function closeExamDay(){
   _examCurrentUid=null;
   _examCurrentBooth=null;
-  document.getElementById("examday-booth-area").style.display="none";
+  document.getElementById("examday-modal-overlay").classList.remove("open");
   renderExamDayMemberList();
+}
+function closeExamDayOutside(e){
+  if(e.target===document.getElementById("examday-modal-overlay")) closeExamDay();
 }
 
 function renderExamBoothList(){
@@ -1557,7 +1567,8 @@ async function toggleExamItem(key,checked){
   renderExamDayMemberList();
   await saveExamItemToDB(uid,boothId,key,checked);
   if(!wasAllPassed && examAllPassed(uid)){
-    showCertifiedBadge(uid);
+    // 演出は確認者にではなく、後で受験者本人がログインした際に表示される
+    showToast("🏅 全ブース合格になりました！受験者側で認定演出が表示されます","success");
   }
 }
 
@@ -1608,6 +1619,17 @@ function renderExamResultCard(){
       </div>`;
   });
   container.innerHTML=html;
+
+  // 認定合格を「本人が初めて見たとき」だけお祝い演出（このブラウザで既に見ていたら出さない）
+  if(certified){
+    const seenKey='kpics_certified_seen_'+uid;
+    let alreadySeen=false;
+    try { alreadySeen = localStorage.getItem(seenKey)==='1'; } catch(e){ alreadySeen=false; }
+    if(!alreadySeen){
+      try { localStorage.setItem(seenKey,'1'); } catch(e){}
+      showCertifiedBadge(uid);
+    }
+  }
 }
 
 function showCertifiedBadge(uid){
