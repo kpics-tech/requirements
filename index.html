@@ -711,7 +711,9 @@ function practiceComplete(uid,domainId){
   }
   return prog.subjects.every(s => (s.practiceDates||[]).filter(dt=>dt.trim()!=="").length >= 3);
 }
-function seminarCount(uid){ return DOMAINS.filter(d => PROGRESS[uid]?.[d.id]?.seminarSelected !== null).length; }
+// セミナー受講ボタンは全学年に表示するため、4回（血管穿刺含む）で判定する
+function requiredSeminarDomains(){ return DOMAINS; }
+function seminarCount(uid){ return requiredSeminarDomains().filter(d => PROGRESS[uid]?.[d.id]?.seminarSelected !== null).length; }
 
 // 受験資格の画像Pass判定からは「排泄ケアエコー(bowel)」を除外する
 // （画像アップロード・先生チェック自体は引き続き可能。セミナー受講は排泄ケアエコーも含め全4回必須）
@@ -727,8 +729,7 @@ function entryPassCount(uid){
 function canEntry(uid){
   if(!PROGRESS[uid]) return false;
   const imagePassed = entryPassCount(uid)===entryTotalViews();
-  // 血管穿刺の自主練習は受験必須条件から除外（スチューデントドクター限定の自主練習のため）
-  const seminarsOK = seminarCount(uid)===DOMAINS.length;
+  const seminarsOK = seminarCount(uid)===requiredSeminarDomains().length; // 血管穿刺のセミナー受講も含めて4回必須
   return imagePassed && seminarsOK;
 }
 function subjectAllPass(uid,domainId,si){
@@ -831,12 +832,10 @@ function renderDomainList(){
   container.innerHTML="";
   const uid=window.CURRENT_UID;
   if(!uid || !PROGRESS[uid]) return; // 未初期化ガード
-  // 血管穿刺の自主練習はスチューデントドクター（5・6年生）限定。
-  // 部員側で学年5未満（学年未登録含む）の場合はタブ自体を表示しない。
+  // 血管穿刺の自主練習記録（練習日の入力等）はスチューデントドクター（5・6年生）限定。
+  // ただし「セミナー受講」ボタンは全学年が押せるよう、カード自体は全員に表示する。
   const isStudentDoctor = (window.CURRENT_YEAR||0) >= 5;
-  const visibleDomains = (window.CURRENT_ROLE==='member' && !isStudentDoctor)
-    ? DOMAINS.filter(d => d.id!=='vascular')
-    : DOMAINS;
+  const visibleDomains = DOMAINS;
   visibleDomains.forEach((domain,di) => {
     const prog=PROGRESS[uid][domain.id];
     const card=document.createElement("div");
@@ -844,12 +843,19 @@ function renderDomainList(){
     card.id=`dc-${domain.id}`;
     card.style.animationDelay=`${di*0.07}s`;
 
+    const isVascularRestricted = domain.id==='vascular' && window.CURRENT_ROLE==='member' && !isStudentDoctor;
+
     // UIの種類を切り替え
-    const innerBodyHTML = domain.isSimplePractice
-      ? renderSimplePracticeBody(domain, uid)
-      : domain.isPracticeLog
-        ? renderPracticeLogBody(domain, uid)
-        : renderImageBody(domain, uid);
+    const innerBodyHTML = isVascularRestricted
+      ? `<div style="font-size:11.5px;color:var(--text-dim);margin-top:12px;line-height:1.6;">
+          💉 血管穿刺の自主練習記録はStudent Doctor（5・6年生）が対象です。<br>
+          上の「セミナー受講」だけ選択しておいてください。
+        </div>`
+      : domain.isSimplePractice
+        ? renderSimplePracticeBody(domain, uid)
+        : domain.isPracticeLog
+          ? renderPracticeLogBody(domain, uid)
+          : renderImageBody(domain, uid);
 
     card.innerHTML=`
       <div class="domain-header" onclick="toggleDomain('${domain.id}')">
