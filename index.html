@@ -458,14 +458,14 @@ const DOMAINS = [
   },
   {
     id:"vascular", name:"エコーガイド下血管穿刺", icon:"💉",
-    subtitle:"異なる日に3回練習した日付を入力",
+    subtitle:"練習した記録を残せます（任意）",
     seminarDates:["6/23（火）","7/15（水）","個別レクチャー受講済み"],
     views:[],
     isPracticeLog: true,
     isSimplePractice: true, // 被検者なし・練習日3回のみ
   },
   {
-    id:"bowel", name:"排便ケアエコー", icon:"🔬",
+    id:"bowel", name:"排泄ケアエコー", icon:"🔬",
     subtitle:"下腹部横断像（短軸・長軸）＋ 下行結腸短軸",
     seminarDates:["7/1（水）","7/28（火）","個別レクチャー受講済み"],
     views:[
@@ -491,7 +491,7 @@ const REFS = {
   lung:           {title:"肺エコー",          points:[]},
   dvt:            {title:"膝窩静脈（DVT評価）",points:[]},
   puncture:       {title:"エコーガイド下血管穿刺",points:[]},
-  bowel_tbd:      {title:"排便ケアエコー",    points:[]},
+  bowel_tbd:      {title:"排泄ケアエコー",    points:[]},
 };
 
 // ================================================================
@@ -920,7 +920,7 @@ function renderSimplePracticeBody(domain, uid){
   const prog=PROGRESS[uid][domain.id];
   const dates=prog.simpleDates||["","",""];
   return `
-    <div class="sec-label">練習記録（異なる日に3回以上）</div>
+    <div class="sec-label">練習記録（任意・練習した日を記録できます）</div>
     <div style="display:flex;flex-direction:column;gap:8px;max-width:320px;" id="pdlist-${domain.id}-simple">
       ${dates.map((d,di)=>`
         <div style="display:flex;align-items:center;gap:8px;" id="pdrow-${domain.id}-simple-${di}">
@@ -936,9 +936,9 @@ function renderSimplePracticeBody(domain, uid){
       ＋ 練習日を追加
     </button>
     <div id="simple-status-${domain.id}" style="font-size:11px;margin-top:6px;">
-      ${dates.filter(d=>d.trim()!=="").length >= 3
-        ? `<span class="sbadge s-pa">✓ ${dates.filter(d=>d.trim()!=="").length}回練習済み</span>`
-        : `<span class="sbadge s-un">あと${3-dates.filter(d=>d.trim()!=="").length}日入力で完了</span>`}
+      ${dates.filter(d=>d.trim()!=="").length > 0
+        ? `<span class="sbadge s-pa">${dates.filter(d=>d.trim()!=="").length}回、練習記録あり</span>`
+        : `<span class="sbadge s-un">まだ記録なし（任意）</span>`}
     </div>`;
 }
 
@@ -967,9 +967,9 @@ function updateSimpleDate(domainId,di,val){
   prog.simpleDates[di]=val;
   const filled=prog.simpleDates.filter(d=>d.trim()!=="").length;
   const statusEl=document.getElementById(`simple-status-${domainId}`);
-  if(statusEl) statusEl.innerHTML=filled>=3
-    ? `<span class="sbadge s-pa">✓ ${filled}回練習済み</span>`
-    : `<span class="sbadge s-un">あと${3-filled}日入力で完了</span>`;
+  if(statusEl) statusEl.innerHTML=filled>0
+    ? `<span class="sbadge s-pa">${filled}回、練習記録あり</span>`
+    : `<span class="sbadge s-un">まだ記録なし（任意）</span>`;
   updateDomainMeta(domainId);
   // DB保存
   _supabase.from('practice_dates').upsert({
@@ -1099,7 +1099,7 @@ function updateDomainMeta(domainId){
     const dots=Array(3).fill(0).map((_,i)=>
       `<div class="subj-dot ${i<filled?"pa":""}"></div>`).join("");
     subjHTML=`<div style="display:flex;align-items:center;gap:4px;">
-      ${filled>=3?`<span class="done-badge" style="font-size:9px;padding:1px 5px;">✓</span>`:`<span class="tag" style="font-size:9px;padding:1px 5px;">${filled}/3</span>`}
+      ${filled>0?`<span class="tag" style="font-size:9px;padding:1px 5px;">${filled}回記録</span>`:`<span class="tag" style="font-size:9px;padding:1px 5px;">記録なし</span>`}
       <div style="display:flex;gap:3px;">${dots}</div>
     </div>`;
   } else {
