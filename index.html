@@ -388,6 +388,19 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <div style="font-size:18px;font-weight:700;">認定試験 当日評価</div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">受験者名をタップして、実技を見ながらその場でチェックしてください。全項目チェックで合格・バッジ贈呈となります。</div>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <button id="examday-refresh" onclick="refreshExamData()"
+        style="background:var(--orange);color:var(--black);border:none;padding:8px 16px;
+        border-radius:3px;font-size:12px;font-weight:700;cursor:pointer;
+        font-family:'Noto Sans JP',sans-serif;">↻ 最新に更新</button>
+      <button onclick="toggleExamShowAll()"
+        style="background:transparent;color:var(--text-muted);border:1px solid var(--border-light);
+        padding:8px 14px;border-radius:3px;font-size:12px;cursor:pointer;
+        font-family:'Noto Sans JP',sans-serif;">資格外の部員も表示</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px;line-height:1.6;">
+      他の確認者が別のブースで入れたチェックは、この「最新に更新」を押すと反映されます。
+    </div>
     <div class="member-grid" id="examday-member-list"></div>
   </div>
 </div>
@@ -1317,7 +1330,7 @@ function showPage(page){
   if(tabMap[page]) document.getElementById(tabMap[page])?.classList.add("active");
   if(page==="reviewer") renderMemberList();
   if(page==="matrix") renderMatrix();
-  if(page==="examday") renderExamDayMemberList();
+  if(page==="examday"){ renderExamDayMemberList(); refreshExamData(); }
   if(page==="member") renderExamResultCard();
 }
 
@@ -1451,13 +1464,47 @@ function renderMatrix(){
 // EXAM DAY PAGE（確認者専用・当日実技チェック）
 // ================================================================
 let _examCurrentUid=null, _examCurrentBooth=null;
+// 資格を満たしていない部員も一覧に出すか（当日の緊急用）
+let _examShowAll=false;
+function toggleExamShowAll(){
+  _examShowAll=!_examShowAll;
+  renderExamDayMemberList();
+}
+
+// 他の確認者が別端末で入れたチェックを取り込む
+async function refreshExamData(){
+  const btn=document.getElementById('examday-refresh');
+  if(btn){ btn.disabled=true; btn.textContent='更新中…'; }
+  try{
+    const {data:profiles,error}=await _supabase.from('profiles').select('*').eq('role','member');
+    if(error) throw error;
+    if(profiles){
+      MEMBERS.length=0;
+      profiles.forEach(pr=>MEMBERS.push({uid:pr.id,name:pr.name,year:pr.year||''}));
+      initProgress();
+      initExamResults();
+    }
+    await loadFromDB();
+    renderExamDayMemberList();
+    const ta=document.getElementById('examday-comment');
+    const typing = ta && document.activeElement===ta;
+    if(_examCurrentUid && !typing){
+      renderExamBoothList();
+      if(_examCurrentBooth) renderExamChecklist();
+    }
+  }catch(e){
+    showToast('更新に失敗しました: '+(e.message||e),'error');
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='↻ 最新に更新'; }
+  }
+}
 
 function renderExamDayMemberList(){
   const container=document.getElementById("examday-member-list");
   container.innerHTML="";
-  const eligible=MEMBERS.filter(m=>canEntry(m.uid));
+  const eligible = _examShowAll ? MEMBERS.slice() : MEMBERS.filter(m=>canEntry(m.uid));
   if(eligible.length===0){
-    container.innerHTML=`<div style="font-size:12px;color:var(--text-muted);padding:10px 2px;">エントリー資格（キー画像 全Pass＋セミナー受講完了）のある部員がまだいません。</div>`;
+    container.innerHTML=`<div style="font-size:12px;color:var(--text-muted);padding:10px 2px;">エントリー資格（キー画像 全Pass＋セミナー受講完了）のある部員がまだいません。<br>当日の緊急時は「資格外の部員も表示」を押してください。</div>`;
     return;
   }
   eligible.forEach(m=>{
@@ -1469,8 +1516,8 @@ function renderExamDayMemberList(){
     div.innerHTML=`
       <div style="display:flex;align-items:center;justify-content:space-between;">
         <div>
-          <div style="font-size:14px;font-weight:700;">${m.name}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${m.year}年生</div>
+          <div style="font-size:14px;font-weight:700;">${m.name}${canEntry(m.uid)?'':' <span style="font-size:10px;color:var(--keep);">（資格未充足）</span>'}</div>
+          <div style="font-size:11px;color:${m.year?'var(--text-muted)':'var(--keep)'};">${m.year?m.year+'年生':'⚠ 学年が未設定です'}</div>
         </div>
         ${certified
           ? `<span class="done-badge">🏅 認定合格</span>`
@@ -1578,7 +1625,13 @@ async function toggleExamItem(key,checked){
   renderExamChecklist();
   renderExamBoothList();
   renderExamDayMemberList();
-  await saveExamItemToDB(uid,boothId,key,checked);
+  const saved=await saveExamItemToDB(uid,boothId,key,checked);
+  if(!saved){
+    // 保存できなかったらチェックを元に戻す（保存済みだと誤解しないため）
+    EXAM_RESULTS[uid][boothId].items[key]=!checked;
+    renderExamChecklist(); renderExamBoothList(); renderExamDayMemberList();
+    return;
+  }
   if(!wasAllPassed && examAllPassed(uid)){
     // 演出は確認者にではなく、後で受験者本人がログインした際に表示される
     showToast("🏅 全ブース合格になりました！受験者側で認定演出が表示されます","success");
@@ -1604,8 +1657,8 @@ async function saveExamComment(){
   if(!uid||!boothId) return;
   const val=document.getElementById("examday-comment").value;
   EXAM_RESULTS[uid][boothId].comment=val;
-  await saveExamCommentToDB(uid,boothId,val);
-  showToast("コメントを保存しました","success");
+  const ok=await saveExamCommentToDB(uid,boothId,val);
+  if(ok) showToast("コメントを保存しました","success");
 }
 
 // ================================================================
@@ -1637,7 +1690,7 @@ function renderExamResultCard(){
     <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;">認定試験 結果</div>
     ${certified?`<div style="position:relative;overflow:hidden;background:linear-gradient(160deg,#12100B 0%,#1D1810 48%,#12100B 100%);
       border:1px solid #8A6420;border-radius:6px;padding:18px 14px 15px;margin-bottom:12px;text-align:center;">
-      <div style="margin-bottom:5px;">${kpSectorEmblem(40)}</div>
+      <div style="margin-bottom:5px;">${kpLogoMark(46)}</div>
       <div style="font-family:'Bebas Neue',sans-serif;font-size:15px;letter-spacing:.26em;color:#F3D389;">K-PICS CERTIFIED</div>
       <div style="font-size:11px;color:#9C9484;margin-top:6px;line-height:1.6;">全ブースの実技評価に合格しました</div>
       <button onclick="showCertificateCard('${uid}')" style="margin-top:12px;background:transparent;border:1px solid #8A6420;
@@ -1732,14 +1785,20 @@ function kpCertStyle(){
   document.head.appendChild(st);
 }
 
-function kpSectorEmblem(size){
-  const w=size||54, h=Math.round(size*0.85)||46;
-  return `<svg width="${w}" height="${h}" viewBox="0 0 54 46" aria-hidden="true" style="display:inline-block;vertical-align:middle;">
-    <path d="M27 4 L7.5 41 A22 22 0 0 0 46.5 41 Z" fill="rgba(232,160,32,.08)" stroke="#E8A020" stroke-width="1.3" stroke-linejoin="round"/>
-    <path d="M14 30 A15 15 0 0 0 40 30" fill="none" stroke="#E8A020" stroke-width=".8" opacity=".5"/>
-    <path d="M18.5 21 A9.5 9.5 0 0 0 35.5 21" fill="none" stroke="#E8A020" stroke-width=".8" opacity=".5"/>
-    <circle cx="27" cy="4.5" r="2.1" fill="#F3D389"/>
-  </svg>`;
+// 部のロゴマーク。ナビにある画像をそのまま流用する（ファイルを重くしないため）。
+// 元画像は白背景で、ロゴ本体が中心からわずかにずれているので、
+// ロゴだけを正円に切り抜いて表示する。
+function kpLogoMark(size){
+  const el=document.querySelector('img.nav-logo');
+  const src=el?el.src:'';
+  const k=size/920;   // 920 = 元画像上でロゴが占める正方形の一辺
+  return `<div style="width:${size}px;height:${size}px;overflow:hidden;border-radius:50%;
+      position:relative;display:inline-block;vertical-align:middle;background:#fff;
+      box-shadow:0 0 0 1px #8A6420,0 0 22px rgba(232,160,32,.4);">
+    <img src="${src}" alt="K-PICS" style="position:absolute;
+      width:${(1206*k).toFixed(1)}px;height:${(1195*k).toFixed(1)}px;
+      left:${(-197*k).toFixed(1)}px;top:${(-119*k).toFixed(1)}px;">
+  </div>`;
 }
 
 function kpCertSerial(uid){
@@ -1769,8 +1828,8 @@ function launchCertifiedCeremony(uid){
   const w=canvas.width, h=canvas.height;
 
   const emblem=document.createElement('div');
-  emblem.style.cssText='position:relative;z-index:2;animation:kpCertStamp .8s cubic-bezier(.2,.85,.3,1) 1.5s both;';
-  emblem.innerHTML=kpSectorEmblem(58);
+  emblem.style.cssText='position:relative;z-index:2;animation:kpCertStamp .85s cubic-bezier(.2,.85,.3,1) .25s both;';
+  emblem.innerHTML=kpLogoMark(88);
   overlay.appendChild(emblem);
 
   const title=document.createElement('div');
@@ -1782,15 +1841,12 @@ function launchCertifiedCeremony(uid){
 
   const sub=document.createElement('div');
   sub.style.cssText=`position:relative;z-index:2;font-size:clamp(12px,2.7vw,16px);color:#D8D2C4;
-    letter-spacing:.16em;text-align:center;animation:kpCertRise 1s ease-out 2.1s both;`;
+    letter-spacing:.16em;text-align:center;animation:kpCertRise 1s ease-out 1.9s both;`;
   sub.textContent='K-PICS 認定試験 合格';
   overlay.appendChild(sub);
 
-  // エコーの扇形（セクタ）走査を模した演出
-  const cx=w/2, cy=h*0.05, R=Math.hypot(w*0.5,h)*1.02;
-  const HALF=Math.PI/4.4;
-  const A0=Math.PI/2-HALF, A1=Math.PI/2+HALF;
-  const trail=[], dust=[];
+  // 金の粒子がゆっくり舞い上がる（花火とは別種の、静かな演出）
+  const dust=[];
   let t0=null;
 
   function frame(ts){
@@ -1798,41 +1854,7 @@ function launchCertifiedCeremony(uid){
     const el=(ts-t0)/1000;
     ctx.clearRect(0,0,w,h);
 
-    ctx.save();
-    ctx.strokeStyle='rgba(232,160,32,0.16)'; ctx.lineWidth=1;
-    ctx.beginPath();
-    ctx.moveTo(cx,cy);
-    ctx.arc(cx,cy,R,A0,A1);
-    ctx.closePath(); ctx.stroke();
-    for(let k=1;k<=4;k++){
-      ctx.beginPath();
-      ctx.arc(cx,cy,R*k/5,A0,A1);
-      ctx.strokeStyle='rgba(232,160,32,0.07)'; ctx.stroke();
-    }
-    ctx.restore();
-
-    const sweepT=Math.min(el/1.7,1);
-    const A=A0+(A1-A0)*sweepT;
-    if(sweepT<1) trail.push({a:A,life:1});
-    for(let i=trail.length-1;i>=0;i--){
-      const tr=trail[i];
-      tr.life-=0.016;
-      if(tr.life<=0){ trail.splice(i,1); continue; }
-      ctx.beginPath();
-      ctx.moveTo(cx,cy);
-      ctx.lineTo(cx+Math.cos(tr.a)*R, cy+Math.sin(tr.a)*R);
-      ctx.strokeStyle='rgba(243,211,137,'+(tr.life*0.26).toFixed(3)+')';
-      ctx.lineWidth=2; ctx.stroke();
-    }
-    if(sweepT<1){
-      ctx.beginPath();
-      ctx.moveTo(cx,cy);
-      ctx.lineTo(cx+Math.cos(A)*R, cy+Math.sin(A)*R);
-      ctx.strokeStyle='rgba(255,240,205,0.95)'; ctx.lineWidth=2.5;
-      ctx.shadowColor='#E8A020'; ctx.shadowBlur=20; ctx.stroke(); ctx.shadowBlur=0;
-    }
-
-    if(el>1.3 && dust.length<170 && Math.random()<0.55){
+    if(dust.length<170 && Math.random()<0.55){
       dust.push({x:Math.random()*w, y:h+12,
         vx:(Math.random()-0.5)*0.3, vy:-(0.35+Math.random()*0.85),
         r:0.7+Math.random()*1.8, life:1, decay:0.0026+Math.random()*0.0034});
@@ -1855,7 +1877,7 @@ function launchCertifiedCeremony(uid){
     overlay.style.transition='opacity .85s';
     overlay.style.opacity='0';
     setTimeout(()=>{ overlay.remove(); showCertificateCard(uid); }, 880);
-  }, 4000);
+  }, 3700);
 }
 
 // 認定証（いつでも見返せる）
@@ -1894,7 +1916,7 @@ function showCertificateCard(uid){
             background:linear-gradient(90deg,transparent,rgba(255,242,208,.11),transparent);
             animation:kpCertSheen 2.8s ease-in-out .5s;"></div>
 
-          <div>${kpSectorEmblem(50)}</div>
+          <div>${kpLogoMark(62)}</div>
           <div style="font-family:'Bebas Neue',sans-serif;font-size:11px;letter-spacing:.34em;color:#8A6420;margin-top:8px;">K-PICS</div>
           <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:.16em;color:#F3D389;line-height:1.15;margin-top:2px;">CERTIFICATE</div>
           <div style="font-size:11px;color:#9C9484;letter-spacing:.32em;margin-top:3px;">認 定 証</div>
@@ -2389,21 +2411,27 @@ async function saveSeminarToDB(uid,domainId,seminarIdx){
   if(error) showToast('セミナー情報の保存に失敗しました','error');
 }
 
+// ※Supabaseはデータベース側のエラーで例外を投げず {error} を返す。
+//   try/catchだけでは検知できないため、必ず error を見ること。
 async function saveExamItemToDB(uid,boothId,itemKey,checked){
   try {
-    await _supabase.from('exam_checklist').upsert({
+    const {error}=await _supabase.from('exam_checklist').upsert({
       uid, booth_id:boothId, item_key:itemKey, checked,
       checked_by:window.CURRENT_UID, updated_at:new Date().toISOString(),
     },{onConflict:'uid,booth_id,item_key'});
-  } catch(e){ showToast('保存に失敗しました: '+e.message,'error'); }
+    if(error){ showToast('⚠ 保存できていません: '+error.message,'error'); return false; }
+    return true;
+  } catch(e){ showToast('⚠ 保存できていません: '+e.message,'error'); return false; }
 }
 async function saveExamCommentToDB(uid,boothId,comment){
   try {
-    await _supabase.from('exam_feedback').upsert({
+    const {error}=await _supabase.from('exam_feedback').upsert({
       uid, booth_id:boothId, comment,
       updated_by:window.CURRENT_UID, updated_at:new Date().toISOString(),
     },{onConflict:'uid,booth_id'});
-  } catch(e){ showToast('保存に失敗しました: '+e.message,'error'); }
+    if(error){ showToast('⚠ コメントを保存できていません: '+error.message,'error'); return false; }
+    return true;
+  } catch(e){ showToast('⚠ コメントを保存できていません: '+e.message,'error'); return false; }
 }
 async function saveSubjectNameToDB(uid,domainId,si,name){
   await _supabase.from('subject_names').upsert({
