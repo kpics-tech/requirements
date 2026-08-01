@@ -281,6 +281,7 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <button class="nav-tab" id="nav-reviewer-tab" onclick="showPage('reviewer')">確認者</button>
       <button class="nav-tab" id="nav-matrix-tab" onclick="showPage('matrix')" style="display:none;">一覧表</button>
       <button class="nav-tab" id="nav-examday-tab" onclick="showPage('examday')" style="display:none;">本番試験</button>
+      <button onclick="reloadApp()" title="アプリを最新の状態にします" style="padding:5px 9px;font-size:11px;font-weight:600;border:1px solid var(--border-light);border-radius:2px;background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap;">↻ 更新</button>
       <button onclick="doLogout()" style="padding:5px 10px;font-size:11px;font-weight:600;border:1px solid var(--border-light);border-radius:2px;background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap;">ログアウト</button>
     </div>
   </div>
@@ -322,7 +323,7 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
     <div id="domain-list"></div>
 
     <div style="margin-top:22px;">
-      <button id="entry-btn" class="entry-btn" disabled>⚑ &nbsp; 8/2 認定試験にエントリー</button>
+      <button id="entry-btn" class="entry-btn" disabled>⚑ &nbsp; 認定試験にエントリー</button>
       <div id="entry-hint" style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:7px;"></div>
     </div>
 
@@ -377,6 +378,23 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       </div>
     </div>
     <div id="matrix-container" style="overflow-x:auto;"></div>
+
+    <div style="margin-top:34px;padding-top:20px;border-top:1px solid var(--border-light);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;">保管容量の管理</div>
+          <div style="font-size:13px;font-weight:700;">提出画像の使用量</div>
+        </div>
+        <button onclick="loadStorageUsage()" style="background:transparent;border:1px solid var(--border-light);
+          color:var(--text-muted);padding:6px 13px;border-radius:2px;font-size:11.5px;cursor:pointer;
+          font-family:'Noto Sans JP',sans-serif;white-space:nowrap;">使用量を調べる</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:7px;line-height:1.75;">
+        無料で使える保管容量は 1GB です。卒業した部員や、しばらく使っていない部員の画像を消すと空きが増えます。
+        画像を消しても、Pass判定・試験結果・認定証は残ります。
+      </div>
+      <div id="storage-usage" style="margin-top:14px;"></div>
+    </div>
   </div>
 </div>
 
@@ -805,10 +823,27 @@ function examHasAnyRecord(uid){
 }
 
 // ================================================================
+// ★★★ ここだけ書き換えれば次回の試験に使えます ★★★
+//
+//  KP_CONFIG.examDateTime … 次の認定試験の日時（カウントダウンに使う）
+//  KP_CONFIG.examDateLabel… 画面に出す表示（受験票などに使う）
+//  KP_CONFIG.keepDays     … 合格から何日で提出画像を自動削除するか
+//
+//  例）2027年2月14日(日)9時に試験をするなら
+//      examDateTime : "2027-02-14T09:00:00"
+//      examDateLabel: "2027年2月14日（日）"
+// ================================================================
+const KP_CONFIG = {
+  examDateTime : "2026-08-02T09:00:00",
+  examDateLabel: "2026年8月2日（日）",
+  keepDays     : 30,
+};
+
+// ================================================================
 // COUNTDOWN + PROGRESS
 // ================================================================
 function updateCountdown(){
-  const diff = new Date("2026-08-02T09:00:00") - new Date();
+  const diff = new Date(KP_CONFIG.examDateTime) - new Date();
   document.getElementById("cd-days").textContent = Math.max(0, Math.ceil(diff/86400000));
 }
 function updateProgressBar(){
@@ -1643,7 +1678,8 @@ async function toggleExamItem(key,checked){
 // ※先生・コアメンバーのバッジは引き続きSupabaseから手動設定
 async function awardCertifiedBadge(uid){
   try{
-    const {error}=await _supabase.from('profiles').update({is_certified:true}).eq('id',uid);
+    const {error}=await _supabase.from('profiles')
+      .update({is_certified:true, certified_at:new Date().toISOString()}).eq('id',uid);
     if(error){
       showToast('バッジの自動付与に失敗しました。Supabaseで手動設定してください: '+error.message,'error');
     }
@@ -1671,8 +1707,50 @@ function toggleExamResultBooth(boothId){
   else _examCardOpen.add(boothId);
   renderExamResultCard();
 }
+// ブラウザが古い画面を覚えていることがあるので、確実に取り直す
+async function reloadApp(){
+  try{
+    if(window.caches && caches.keys){
+      const keys=await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+    }
+  }catch(e){}
+  const u=new URL(location.href);
+  u.searchParams.set('v', Date.now());
+  location.replace(u.toString());
+}
+
 function kpEsc(v){
   return String(v==null?'':v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+}
+
+// 画像の保存期間のお知らせ（合格者のみ）
+function kpRetentionNotice(){
+  const info=kpPurgeInfo();
+  if(!info) return '';
+  if(info.done){
+    return `<div style="border:1px solid var(--border-light);border-radius:4px;padding:11px 13px;margin-bottom:12px;
+      font-size:11px;color:var(--text-dim);line-height:1.7;">
+      提出画像は保存期間を過ぎたため削除済みです。合否と評価の記録は残っています。</div>`;
+  }
+  if(info.kept){
+    return `<div style="border:1px solid var(--border-light);border-radius:4px;padding:11px 13px;margin-bottom:12px;
+      font-size:11px;color:var(--text-muted);line-height:1.7;">
+      提出画像を残す設定になっています。
+      <span onclick="toggleKeepImages()" style="color:var(--orange);cursor:pointer;border-bottom:1px solid var(--orange);">自動削除に戻す</span></div>`;
+  }
+  const d=Math.max(info.days,0);
+  return `<div style="border:1px solid var(--border-light);border-radius:4px;padding:12px 13px;margin-bottom:12px;
+    font-size:11.5px;color:var(--text-muted);line-height:1.8;">
+    <div style="color:var(--text);font-weight:700;margin-bottom:4px;">提出画像の保存期間について</div>
+    アプリを無料で続けていくため、合格から${KP_KEEP_DAYS}日たった提出画像は自動で削除されます。
+    合否・評価・コメントの記録は消えません。<br>
+    <span style="color:var(--orange);">削除まで あと約${d}日</span><br>
+    <span onclick="toggleKeepImages()" style="display:inline-block;margin-top:7px;color:var(--orange);
+      cursor:pointer;border-bottom:1px solid var(--orange);">画像を残しておきたい方はこちら</span>
+    <span onclick="deleteMyImagesNow()" style="display:inline-block;margin-top:7px;margin-left:14px;
+      color:var(--text-dim);cursor:pointer;border-bottom:1px solid var(--border-light);">今すぐ削除する</span>
+  </div>`;
 }
 
 function renderExamResultCard(){
@@ -1687,16 +1765,27 @@ function renderExamResultCard(){
   container.style.display="";
   const certified=examAllPassed(uid);
   let html=`
-    <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;">認定試験 結果</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+      <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;">認定試験 結果</div>
+      <button id="exam-refresh-btn" onclick="checkCertOnce(true)"
+        style="background:transparent;border:1px solid var(--border-light);color:var(--text-muted);
+        padding:5px 11px;border-radius:2px;font-size:11px;cursor:pointer;
+        font-family:'Noto Sans JP',sans-serif;white-space:nowrap;">↻ 試験結果を更新</button>
+    </div>
     ${certified?`<div style="position:relative;overflow:hidden;background:linear-gradient(160deg,#12100B 0%,#1D1810 48%,#12100B 100%);
       border:1px solid #8A6420;border-radius:6px;padding:18px 14px 15px;margin-bottom:12px;text-align:center;">
       <div style="margin-bottom:5px;">${kpLogoMark(46)}</div>
       <div style="font-family:'Bebas Neue',sans-serif;font-size:15px;letter-spacing:.26em;color:#F3D389;">K-PICS CERTIFIED</div>
       <div style="font-size:11px;color:#9C9484;margin-top:6px;line-height:1.6;">全ブースの実技評価に合格しました</div>
-      <button onclick="showCertificateCard('${uid}')" style="margin-top:12px;background:transparent;border:1px solid #8A6420;
+      <button onclick="launchCertifiedCeremony('${uid}')" style="margin-top:12px;background:transparent;border:1px solid #8A6420;
         color:#F3D389;padding:7px 20px;border-radius:3px;font-size:11.5px;font-weight:700;cursor:pointer;
         font-family:'Noto Sans JP',sans-serif;letter-spacing:.04em;">認定証を表示</button>
-    </div>`:''}`;
+      <div style="margin-top:9px;">
+        <span onclick="showKpicsMessage()" style="font-size:10.5px;color:#8A8377;cursor:pointer;
+          border-bottom:1px solid rgba(138,100,32,.5);padding-bottom:1px;">このバッジについて</span>
+      </div>
+    </div>`:''}
+    ${certified?kpRetentionNotice():''}`;
 
   EXAM_BOOTHS.forEach(b=>{
     const passed=examBoothPassed(uid,b.id);
@@ -1752,7 +1841,7 @@ function renderExamResultCard(){
   });
   container.innerHTML=html;
 
-  // 認定合格を「本人が初めて見たとき」だけお祝い演出（このブラウザで既に見ていたら出さない）
+  // 初回だけ自動で演出。2回目以降は「認定証を表示」ボタンから何度でも見られる。
   if(certified){
     const seenKey='kpics_certified_seen_'+uid;
     let alreadySeen=false;
@@ -1761,6 +1850,316 @@ function renderExamResultCard(){
       try { localStorage.setItem(seenKey,'1'); } catch(e){}
       showCertifiedBadge(uid);
     }
+  }
+}
+
+// ================================================================
+// 画像の保存期間
+// 合格から30日たった画像は自動で消す（無料枠を使い切らないため）。
+// ただし次の3つを必ず守る:
+//   1. 消すのは「本人がログインしたとき、その本人の画像だけ」
+//   2. お知らせを一度も見ていない人は消さない（見てから7日間の猶予）
+//   3. 「残す」を選んだ人は消さない
+// 合否や判定の記録（submissionsの行）は残す。消すのは画像ファイルだけ。
+// ================================================================
+const KP_KEEP_DAYS = KP_CONFIG.keepDays;   // 設定ブロックの値を使う
+const KP_GRACE_DAYS = 7;    // お知らせを見てから最低何日待つか
+
+function kpDays(a,b){ return (new Date(b)-new Date(a))/86400000; }
+
+// 画像の公開URLから、保存庫の中のファイル名を取り出す
+function kpStoragePath(url){
+  if(!url) return null;
+  const i=url.indexOf('/echo-images/');
+  if(i<0) return null;
+  try{ return decodeURIComponent(url.slice(i+'/echo-images/'.length).split('?')[0]); }
+  catch(e){ return null; }
+}
+
+// あと何日で消えるか（消える予定がなければ null）
+function kpPurgeInfo(){
+  const pr=window.CURRENT_PROFILE;
+  if(!pr || !pr.is_certified || !pr.certified_at) return null;
+  if(pr.keep_images) return {kept:true};
+  if(pr.images_purged_at) return {done:true};
+  const now=new Date().toISOString();
+  let due = KP_KEEP_DAYS - kpDays(pr.certified_at, now);
+  if(!pr.purge_notice_seen_at) return {days:Math.max(Math.ceil(due), KP_GRACE_DAYS), notSeen:true};
+  const graceLeft = KP_GRACE_DAYS - kpDays(pr.purge_notice_seen_at, now);
+  return {days: Math.ceil(Math.max(due, graceLeft))};
+}
+
+// お知らせを見た日を記録する
+async function kpMarkNoticeSeen(){
+  const pr=window.CURRENT_PROFILE;
+  if(!pr || pr.purge_notice_seen_at) return;
+  const t=new Date().toISOString();
+  const {error}=await _supabase.from('profiles').update({purge_notice_seen_at:t}).eq('id',window.CURRENT_UID);
+  if(!error) pr.purge_notice_seen_at=t;
+}
+
+// 「画像を残す」を切り替える
+async function toggleKeepImages(){
+  const pr=window.CURRENT_PROFILE;
+  if(!pr) return;
+  const next=!pr.keep_images;
+  const {error}=await _supabase.from('profiles').update({keep_images:next}).eq('id',window.CURRENT_UID);
+  if(error){ showToast('設定を保存できませんでした: '+error.message,'error'); return; }
+  pr.keep_images=next;
+  showToast(next?'画像を残す設定にしました':'自動削除の対象に戻しました','success');
+  renderExamResultCard();
+}
+
+// 本人の意思で今すぐ消す
+async function deleteMyImagesNow(){
+  if(!confirm('提出した画像をすべて削除します。\n\n・合否、評価項目、確認者コメント、認定証は残ります\n・削除した画像は元に戻せません\n\n削除してよろしいですか？')) return;
+  const n=await kpDeleteImages(window.CURRENT_UID);
+  if(n===null) return;
+  showToast(n>0?`画像を${n}件削除しました`:'削除する画像はありませんでした','success');
+  renderExamResultCard();
+  renderDomainList();
+}
+
+// 実際に画像を消す処理（本人用・確認者用の両方から呼ぶ）
+// 戻り値: 削除件数、失敗ならnull
+async function kpDeleteImages(uid){
+  try{
+    const {data,error}=await _supabase.from('submissions')
+      .select('image_url').eq('uid',uid).not('image_url','is',null);
+    if(error){ showToast('画像の一覧を取得できませんでした: '+error.message,'error'); return null; }
+    if(!data || data.length===0) return 0;
+
+    const paths=data.map(r=>kpStoragePath(r.image_url)).filter(Boolean);
+    for(let i=0;i<paths.length;i+=100){
+      const {error:delErr}=await _supabase.storage.from('echo-images').remove(paths.slice(i,i+100));
+      if(delErr){ showToast('画像を削除できませんでした: '+delErr.message,'error'); return null; }
+    }
+    const {error:updErr}=await _supabase.from('submissions')
+      .update({image_url:null}).eq('uid',uid).not('image_url','is',null);
+    if(updErr){ showToast('画像URLを消去できませんでした: '+updErr.message,'error'); return null; }
+
+    await _supabase.from('profiles')
+      .update({images_purged_at:new Date().toISOString()}).eq('id',uid);
+    if(window.CURRENT_PROFILE && uid===window.CURRENT_UID){
+      window.CURRENT_PROFILE.images_purged_at=new Date().toISOString();
+    }
+    return data.length;
+  }catch(e){
+    showToast('画像の削除に失敗しました: '+(e.message||e),'error');
+    return null;
+  }
+}
+
+// 条件を満たしていたら、自分の画像だけを消す
+async function purgeOldImagesIfDue(){
+  const uid=window.CURRENT_UID;
+  const pr=window.CURRENT_PROFILE;
+  if(!uid || window.CURRENT_ROLE!=='member' || !pr) return;
+  if(!pr.is_certified || !pr.certified_at) return;
+  if(pr.keep_images || pr.images_purged_at) return;
+  if(!pr.purge_notice_seen_at) return;                  // お知らせ未読なら消さない
+  const now=new Date().toISOString();
+  if(kpDays(pr.certified_at, now) < KP_KEEP_DAYS) return;
+  if(kpDays(pr.purge_notice_seen_at, now) < KP_GRACE_DAYS) return;
+
+  const n=await kpDeleteImages(uid);
+  if(n && n>0) showToast('保存期間を過ぎた画像を削除しました（合否の記録は残っています）','info');
+}
+
+// ================================================================
+// 保管容量の管理（確認者用）
+// 卒業した部員など、本人がログインしなくなった分の画像をここから消せる。
+// ================================================================
+const KP_IMG_KB = 170;    // 1枚あたりのおおよそのサイズ
+
+async function loadStorageUsage(){
+  const box=document.getElementById('storage-usage');
+  if(!box) return;
+  box.innerHTML=`<div style="font-size:11.5px;color:var(--text-muted);">調べています…</div>`;
+  try{
+    const rows=await fetchAllRows(()=>_supabase.from('submissions')
+      .select('uid,image_url').not('image_url','is',null));
+    const count={};
+    rows.forEach(r=>{ count[r.uid]=(count[r.uid]||0)+1; });
+
+    const list=MEMBERS.map(m=>({...m, n:count[m.uid]||0}))
+      .filter(m=>m.n>0)
+      .sort((a,b)=>b.n-a.n);
+
+    // 名簿にない人（退部・卒業などでprofilesから消えた分）
+    const known=new Set(MEMBERS.map(m=>m.uid));
+    let orphan=0;
+    Object.keys(count).forEach(uid=>{ if(!known.has(uid)) orphan+=count[uid]; });
+
+    const total=rows.length;
+    const mb=(total*KP_IMG_KB/1024).toFixed(0);
+    const pct=Math.min(100, Math.round(total*KP_IMG_KB/1024/1024*100));
+
+    let html=`
+      <div style="margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;">
+          <span style="font-weight:700;">画像 ${total} 件 ・ 約 ${mb} MB</span>
+          <span style="color:${pct>=70?'var(--keep)':'var(--text-muted)'};">1GB中 約${pct}%</span>
+        </div>
+        <div style="height:7px;background:var(--border-light);border-radius:4px;overflow:hidden;">
+          <div style="height:100%;width:${pct}%;background:${pct>=70?'var(--keep)':'var(--orange)'};"></div>
+        </div>
+      </div>`;
+
+    if(list.length===0 && orphan===0){
+      html+=`<div style="font-size:11.5px;color:var(--text-muted);">保存されている画像はありません。</div>`;
+      box.innerHTML=html; return;
+    }
+
+    html+=`<div style="border:1px solid var(--border-light);border-radius:4px;overflow:hidden;">`;
+    list.forEach((m,i)=>{
+      const size=(m.n*KP_IMG_KB/1024).toFixed(1);
+      html+=`
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;
+          padding:10px 12px;${i>0?'border-top:1px solid var(--border-light);':''}">
+          <div style="min-width:0;">
+            <div style="font-size:12.5px;font-weight:700;">${kpEsc(m.name)}</div>
+            <div style="font-size:10.5px;color:var(--text-dim);">${m.year?m.year+'年生 ・ ':''}${m.n}件 ・ 約${size}MB</div>
+          </div>
+          <button onclick="adminDeleteImages('${m.uid}','${kpEsc(m.name).replace(/'/g,'')}',${m.n})"
+            style="flex-shrink:0;background:transparent;border:1px solid var(--border-light);
+            color:var(--text-muted);padding:5px 11px;border-radius:2px;font-size:11px;cursor:pointer;
+            font-family:'Noto Sans JP',sans-serif;white-space:nowrap;">画像を削除</button>
+        </div>`;
+    });
+    html+=`</div>`;
+
+    if(orphan>0){
+      html+=`<div style="margin-top:11px;font-size:11px;color:var(--text-dim);line-height:1.7;">
+        名簿にない画像が ${orphan} 件あります（退部・アカウント削除など）。
+        こちらはSupabaseの画面から手動で消してください。</div>`;
+    }
+    box.innerHTML=html;
+  }catch(e){
+    box.innerHTML=`<div style="font-size:11.5px;color:var(--keep);">調べられませんでした: ${kpEsc(e.message||e)}</div>`;
+  }
+}
+
+async function adminDeleteImages(uid,name,n){
+  if(!confirm(`${name} さんの提出画像 ${n} 件を削除します。\n\n・Pass判定、試験結果、認定証はすべて残ります\n・削除した画像は元に戻せません\n\n削除してよろしいですか？`)) return;
+  const done=await kpDeleteImages(uid);
+  if(done===null) return;
+  showToast(`${name} さんの画像を${done}件削除しました`,'success');
+  loadStorageUsage();
+}
+
+// ================================================================
+// バッジの意義（部員ページ・認定証から開ける）
+// ================================================================
+// 全部員に一度だけ自動で開く（合格演出と重ならないよう、少し待ってから）
+function maybeShowKpicsMessageOnce(){
+  if(window.CURRENT_ROLE!=='member' || !window.CURRENT_UID) return;
+  if(!examAllPassed(window.CURRENT_UID)) return;   // 合格者だけに見せる
+  const key='kpics_message_seen_'+window.CURRENT_UID;
+  let seen=false;
+  try{ seen = localStorage.getItem(key)==='1'; }catch(e){ seen=false; }
+  if(seen) return;
+  setTimeout(()=>{
+    if(document.getElementById('kp-cert-overlay')) return;      // 合格演出中なら見送る
+    if(document.getElementById('kp-certificate-overlay')) return;
+    try{ localStorage.setItem(key,'1'); }catch(e){}
+    showKpicsMessage();
+  }, 1200);
+}
+
+function showKpicsMessage(){
+  kpCertStyle();
+  const old=document.getElementById('kp-message-overlay');
+  if(old) old.remove();
+  const ov=document.createElement('div');
+  ov.id='kp-message-overlay';
+  ov.style.cssText=`position:fixed;inset:0;z-index:2200;background:rgba(0,0,0,.93);
+    backdrop-filter:blur(9px);display:flex;align-items:flex-start;justify-content:center;
+    padding:18px;overflow-y:auto;animation:kpCertFade .4s ease-out;`;
+  ov.innerHTML=`
+    <div style="max-width:440px;width:100%;margin:auto 0;animation:kpCertStamp .6s cubic-bezier(.2,.85,.3,1);">
+      <div style="text-align:right;margin-bottom:9px;">
+        <button onclick="document.getElementById('kp-message-overlay').remove()"
+          style="background:transparent;border:1px solid rgba(255,255,255,.28);color:rgba(255,255,255,.7);
+          padding:5px 14px;border-radius:2px;font-size:12px;cursor:pointer;font-family:'Noto Sans JP',sans-serif;">✕ 閉じる</button>
+      </div>
+      <div style="background:linear-gradient(160deg,#12100B 0%,#1C1710 46%,#12100B 100%);
+        border:1px solid #8A6420;border-radius:6px;padding:26px 22px 22px;">
+        <div style="text-align:center;margin-bottom:4px;">${kpLogoMark(52)}</div>
+        <div style="text-align:center;font-family:'Bebas Neue',sans-serif;font-size:13px;
+          letter-spacing:.26em;color:#F3D389;margin-top:8px;">THE BADGE</div>
+        <div style="text-align:center;font-size:11px;color:#8A8377;letter-spacing:.1em;margin-top:2px;">このバッジについて</div>
+
+        <div style="height:1px;background:linear-gradient(90deg,transparent,#8A6420,transparent);margin:18px 0 16px;"></div>
+
+        <div style="font-size:12.5px;line-height:2;color:#CFC8B8;">
+          ここまで練習を重ねてきた皆さん、お疲れさまでした。そして合格された皆さん、おめでとうございます。
+          <br><br>
+          この認定試験は、K-PICSの核となるものです。エコー手技が一定の水準に達したと評価されると、このバッジが渡されます。
+          <br><br>
+          <span style="color:#F3D389;">そして、バッジを取った人が、今度は教える側に回ります。</span>
+          学んだ人が次の人に伝え、その人がまた次の人を育てていく。そんな学生主体の循環を、K-PICSは目指しています。
+          <br><br>
+          だからこれからも、自分の技術を磨き続けてほしい。それと同時に、同期にも後輩にも、時には先輩にも、自分が学んできたことを伝える側になってほしいと思っています。
+          <br><br>
+          人に教えると、自分の理解の浅いところに気づきます。教えることは、相手のためだけでなく、自分のためでもあります。
+          <br><br>
+          この循環を、いずれは学内だけでなく、地域や全国にも広げていきたい。学生教育や地域の医療にも貢献できる活動にしていけたらと思っています。
+          <br><br>
+          バッジを取ったからといって、コアメンバーになる必要はありません。ただ「こんなことをやってみたい」「こうすればもっと良くなるのでは」と思ったことがあれば、ぜひ聞かせてください。
+          <br><br>
+          <span style="color:#F3D389;">学んだことを誰かに伝え、そこでまた自分も学んでいく。</span>
+          その循環を、これから一緒に広げていけたらうれしいです。
+        </div>
+
+        <div style="margin-top:20px;padding-top:14px;border-top:1px solid rgba(232,160,32,.16);
+          text-align:right;font-size:10.5px;color:#6E685C;letter-spacing:.08em;">医学部エコー部　K-PICS</div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+}
+
+// ================================================================
+// 合格したかどうかを定期的に見に行く（試験会場でその場で演出を出すため）
+// 部員としてログインしている間だけ、90秒ごとに自分の結果だけを確認する。
+// ================================================================
+// 自動では見に行かない。部員が「試験結果を更新」を押したときだけ取りに行く。
+function startCertWatch(){}
+function stopCertWatch(){}
+
+async function checkCertOnce(manual){
+  const uid=window.CURRENT_UID;
+  if(!uid || window.CURRENT_ROLE!=='member') return;
+  const btn=document.getElementById('exam-refresh-btn');
+  if(manual && btn){ btn.disabled=true; btn.textContent='確認中…'; }
+  try{
+    const [ecRes,efRes]=await Promise.all([
+      _supabase.from('exam_checklist').select('booth_id,item_key,checked').eq('uid',uid),
+      _supabase.from('exam_feedback').select('booth_id,comment').eq('uid',uid),
+    ]);
+    if(ecRes.error||efRes.error){
+      if(manual) showToast('結果を取得できませんでした','error');
+      return;
+    }
+    const wasCertified=examAllPassed(uid);
+    if(ecRes.data) ecRes.data.forEach(row=>{
+      if(!EXAM_RESULTS[uid]?.[row.booth_id]) return;
+      EXAM_RESULTS[uid][row.booth_id].items[row.item_key]=!!row.checked;
+    });
+    if(efRes.data) efRes.data.forEach(row=>{
+      if(!EXAM_RESULTS[uid]?.[row.booth_id]) return;
+      EXAM_RESULTS[uid][row.booth_id].comment=row.comment||"";
+    });
+    renderExamResultCard();
+    if(manual && !examAllPassed(uid) && !wasCertified){
+      showToast('まだ結果が登録されていません','info');
+    }
+  }catch(e){
+    if(manual) showToast('結果を取得できませんでした','error');
+  }finally{
+    const b=document.getElementById('exam-refresh-btn');
+    if(b){ b.disabled=false; b.textContent='↻ 試験結果を更新'; }
   }
 }
 
@@ -1791,13 +2190,15 @@ function kpCertStyle(){
 function kpLogoMark(size){
   const el=document.querySelector('img.nav-logo');
   const src=el?el.src:'';
-  const k=size/920;   // 920 = 元画像上でロゴが占める正方形の一辺
+  // 元画像1206x1195のうち、ロゴが収まる正方形は (113,34) から一辺1090。
+  // その正方形を円の大きさに合わせて拡大縮小し、はみ出す部分を隠す。
+  const k=size/1090;
   return `<div style="width:${size}px;height:${size}px;overflow:hidden;border-radius:50%;
       position:relative;display:inline-block;vertical-align:middle;background:#fff;
       box-shadow:0 0 0 1px #8A6420,0 0 22px rgba(232,160,32,.4);">
     <img src="${src}" alt="K-PICS" style="position:absolute;
       width:${(1206*k).toFixed(1)}px;height:${(1195*k).toFixed(1)}px;
-      left:${(-197*k).toFixed(1)}px;top:${(-119*k).toFixed(1)}px;">
+      left:${(-113*k).toFixed(1)}px;top:${(-34*k).toFixed(1)}px;">
   </div>`;
 }
 
@@ -1826,6 +2227,23 @@ function launchCertifiedCeremony(uid){
   overlay.appendChild(canvas);
   const ctx=canvas.getContext('2d');
   const w=canvas.width, h=canvas.height;
+
+  // タップで演出を飛ばして認定証へ
+  let _skipped=false;
+  overlay.style.pointerEvents='auto';
+  overlay.style.cursor='pointer';
+  overlay.addEventListener('click',()=>{
+    if(_skipped) return;
+    _skipped=true;
+    overlay.remove();
+    showCertificateCard(uid);
+  });
+
+  const skipHint=document.createElement('div');
+  skipHint.style.cssText=`position:absolute;bottom:26px;left:0;right:0;text-align:center;
+    font-size:10.5px;color:rgba(255,255,255,.32);animation:kpCertRise 1s ease-out 2.4s both;`;
+  skipHint.textContent='タップでスキップ';
+  overlay.appendChild(skipHint);
 
   const emblem=document.createElement('div');
   emblem.style.cssText='position:relative;z-index:2;animation:kpCertStamp .85s cubic-bezier(.2,.85,.3,1) .25s both;';
@@ -1869,14 +2287,18 @@ function launchCertifiedCeremony(uid){
     }
     ctx.globalAlpha=1;
 
-    if(el<5) requestAnimationFrame(frame);
+    if(el<5 && !_skipped) requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 
   setTimeout(()=>{
+    if(_skipped) return;
     overlay.style.transition='opacity .85s';
     overlay.style.opacity='0';
-    setTimeout(()=>{ overlay.remove(); showCertificateCard(uid); }, 880);
+    setTimeout(()=>{
+      if(_skipped) return;
+      overlay.remove(); showCertificateCard(uid);
+    }, 880);
   }, 3700);
 }
 
@@ -1888,6 +2310,10 @@ function showCertificateCard(uid){
   const name=kpEsc(m?m.name:'受験者');
   const year=(m&&m.year)?`${m.year}年生`:'';
   const serial=kpCertSerial(uid);
+  // 認定日は本人の記録から取る（次回以降の試験でも正しく出る）
+  const ca = (window.CURRENT_PROFILE && window.CURRENT_PROFILE.certified_at) || null;
+  const cd = ca ? new Date(ca) : new Date();
+  const certDate = `${cd.getFullYear()}年${cd.getMonth()+1}月${cd.getDate()}日`;
 
   const boothRows=EXAM_BOOTHS.map(b=>`
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid rgba(232,160,32,.13);">
@@ -1936,7 +2362,7 @@ function showCertificateCard(uid){
           <div style="display:flex;justify-content:space-between;gap:10px;margin-top:16px;text-align:left;">
             <div>
               <div style="font-family:'JetBrains Mono',monospace;font-size:8.5px;color:#6E685C;letter-spacing:.1em;">CERTIFIED ON</div>
-              <div style="font-size:11px;color:#D8D2C4;margin-top:2px;">2026年8月2日</div>
+              <div style="font-size:11px;color:#D8D2C4;margin-top:2px;">${certDate}</div>
             </div>
             <div style="text-align:right;">
               <div style="font-family:'JetBrains Mono',monospace;font-size:8.5px;color:#6E685C;letter-spacing:.1em;">NO.</div>
@@ -1950,6 +2376,10 @@ function showCertificateCard(uid){
       </div>
       <div style="text-align:center;margin-top:11px;font-size:10.5px;color:rgba(255,255,255,.4);">
         スクリーンショットで保存できます
+      </div>
+      <div style="text-align:center;margin-top:9px;">
+        <span onclick="showKpicsMessage()" style="font-size:11px;color:#8A8377;cursor:pointer;
+          border-bottom:1px solid rgba(138,100,32,.5);padding-bottom:1px;">このバッジについて</span>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -2266,7 +2696,7 @@ function showEntryCard(uid){
   const year=member?member.year:'';
   const now=new Date();
   const issued=`${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日`;
-  const examDate='2026年8月2日（日）';
+  const examDate=KP_CONFIG.examDateLabel;
   const cardNo='KPICS-'+String(now.getFullYear()).slice(2)+'-'+String(uid).replace(/[^0-9a-zA-Z]/g,'').slice(-4).toUpperCase();
 
   const overlay=document.createElement('div');
@@ -2349,7 +2779,7 @@ function showEntryCard(uid){
       </div>
       <div style="text-align:center;margin-top:14px;font-size:11px;color:rgba(255,255,255,.5);line-height:1.7;">
         📸 スクリーンショットを保存して試験当日に持参してください<br>
-        <span style="font-size:10px;color:rgba(255,255,255,.3);">2026年8月2日（日）認定試験にエントリー完了</span>
+        <span style="font-size:10px;color:rgba(255,255,255,.3);">${KP_CONFIG.examDateLabel} 認定試験にエントリー完了</span>
       </div>
     </div>
   `;
@@ -2502,7 +2932,7 @@ async function doSignup(){
   showToast(`登録完了しました（${roleLabel}として登録）`, 'success');
 }
 
-async function doLogout(){ await _supabase.auth.signOut(); location.reload(); }
+async function doLogout(){ stopCertWatch(); await _supabase.auth.signOut(); location.reload(); }
 
 // ================================================================
 // 認証状態の監視（アプリの起点）
@@ -2511,15 +2941,15 @@ window.CURRENT_UID  = null;
 window.CURRENT_ROLE = 'member';
 window.CURRENT_YEAR = null;
 
-// 30分無操作で自動ログアウト
+// 1時間無操作で自動ログアウト
 let _idleTimer;
 function resetIdleTimer(){
   clearTimeout(_idleTimer);
   _idleTimer=setTimeout(async()=>{
     await _supabase.auth.signOut();
-    alert('30分間操作がなかったため、自動ログアウトしました。');
+    alert('1時間操作がなかったため、自動ログアウトしました。');
     location.reload();
-  }, 30*60*1000);
+  }, 60*60*1000);
 }
 ['click','keydown','touchstart','scroll'].forEach(ev=>
   document.addEventListener(ev, resetIdleTimer, {passive:true})
@@ -2535,6 +2965,7 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     const year = profile?.year || '';
     window.CURRENT_UID  = user.id;
     window.CURRENT_ROLE = role;
+    window.CURRENT_PROFILE = profile || null;
     window.CURRENT_YEAR = year || null;
     document.getElementById('auth-screen').classList.remove('active');
     document.getElementById('nav-reviewer-tab').style.display = role==='reviewer' ? '' : 'none';
@@ -2568,7 +2999,15 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     else { renderDomainList(); showPage('member'); }
 
     await loadFromDB();
-    if(role!=='reviewer'){ renderDomainList(); renderExamResultCard(); }
+    if(role!=='reviewer'){
+      renderDomainList(); renderExamResultCard();
+      if(window.CURRENT_PROFILE?.is_certified){
+        await kpMarkNoticeSeen();
+        renderExamResultCard();
+      }
+      await purgeOldImagesIfDue();
+      maybeShowKpicsMessageOnce();
+    }
     updateProgressBar();
     if(role==='reviewer'){ renderMemberList(); renderMatrix(); }
   } else {
