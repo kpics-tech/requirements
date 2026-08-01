@@ -2138,19 +2138,24 @@ async function checkCertOnce(manual){
       _supabase.from('exam_checklist').select('booth_id,item_key,checked').eq('uid',uid),
       _supabase.from('exam_feedback').select('booth_id,comment').eq('uid',uid),
     ]);
-    if(ecRes.error||efRes.error){
-      if(manual) showToast('結果を取得できませんでした','error');
-      return;
-    }
+    // チェックとコメントは別々に扱う。片方が読めなくても、もう片方は反映する。
     const wasCertified=examAllPassed(uid);
-    if(ecRes.data) ecRes.data.forEach(row=>{
-      if(!EXAM_RESULTS[uid]?.[row.booth_id]) return;
-      EXAM_RESULTS[uid][row.booth_id].items[row.item_key]=!!row.checked;
-    });
-    if(efRes.data) efRes.data.forEach(row=>{
-      if(!EXAM_RESULTS[uid]?.[row.booth_id]) return;
-      EXAM_RESULTS[uid][row.booth_id].comment=row.comment||"";
-    });
+    if(ecRes.error){
+      if(manual) showToast('チェック結果を取得できませんでした: '+ecRes.error.message,'error');
+    } else if(ecRes.data){
+      ecRes.data.forEach(row=>{
+        if(!EXAM_RESULTS[uid]?.[row.booth_id]) return;
+        EXAM_RESULTS[uid][row.booth_id].items[row.item_key]=!!row.checked;
+      });
+    }
+    if(efRes.error){
+      if(manual) showToast('確認者コメントを取得できませんでした: '+efRes.error.message,'error');
+    } else if(efRes.data){
+      efRes.data.forEach(row=>{
+        if(!EXAM_RESULTS[uid]?.[row.booth_id]) return;
+        EXAM_RESULTS[uid][row.booth_id].comment=row.comment||"";
+      });
+    }
     renderExamResultCard();
     if(manual && !examAllPassed(uid) && !wasCertified){
       showToast('まだ結果が登録されていません','info');
@@ -2190,7 +2195,7 @@ function kpCertStyle(){
 function kpLogoMark(size){
   const el=document.querySelector('img.nav-logo');
   const src=el?el.src:'';
-  // 元画像1206x1195のうち、ロゴが収まる正方形は (113,34) から一辺1090。
+  // 元画像1206x1195のうち、ロゴが収まる正方形は (78,34) から一辺1090。
   // その正方形を円の大きさに合わせて拡大縮小し、はみ出す部分を隠す。
   const k=size/1090;
   return `<div style="width:${size}px;height:${size}px;overflow:hidden;border-radius:50%;
@@ -2198,7 +2203,7 @@ function kpLogoMark(size){
       box-shadow:0 0 0 1px #8A6420,0 0 22px rgba(232,160,32,.4);">
     <img src="${src}" alt="K-PICS" style="position:absolute;
       width:${(1206*k).toFixed(1)}px;height:${(1195*k).toFixed(1)}px;
-      left:${(-113*k).toFixed(1)}px;top:${(-34*k).toFixed(1)}px;">
+      left:${(-78*k).toFixed(1)}px;top:${(-34*k).toFixed(1)}px;">
   </div>`;
 }
 
@@ -3089,8 +3094,11 @@ async function loadFromDB(){
     let pDates=null;
     try { pDates = await fetchAllRows(()=>mk('practice_dates')); } catch(e){ pDates=null; }
     let examChecks=null, examFeedbacks=null;
-    try { examChecks = await fetchAllRows(()=>mk('exam_checklist')); } catch(e){ examChecks=null; }
-    try { examFeedbacks = await fetchAllRows(()=>mk('exam_feedback')); } catch(e){ examFeedbacks=null; }
+    try { examChecks = await fetchAllRows(()=>mk('exam_checklist')); }
+    catch(e){ examChecks=null; showToast('試験のチェックを読み込めませんでした: '+(e.message||e),'error'); }
+    // ここを黙って握りつぶすと「コメントだけ出ない」状態の原因が分からなくなる
+    try { examFeedbacks = await fetchAllRows(()=>mk('exam_feedback')); }
+    catch(e){ examFeedbacks=null; showToast('確認者コメントを読み込めませんでした: '+(e.message||e),'error'); }
     if(examChecks) examChecks.forEach(row=>{
       if(!EXAM_RESULTS[row.uid]?.[row.booth_id]) return;
       EXAM_RESULTS[row.uid][row.booth_id].items[row.item_key]=!!row.checked;
