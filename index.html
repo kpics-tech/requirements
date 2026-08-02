@@ -819,7 +819,8 @@ function examHasAnyRecord(uid){
   return EXAM_BOOTHS.some(b => {
     const br=r[b.id];
     if(!br) return false;
-    return Object.values(br.items).some(v=>v===true) || (br.comment||"").trim()!=="";
+    // 2段階評価（1=助言／2=自立）なので「0より大きい」で判定する
+    return Object.values(br.items).some(v=>(v||0)>0) || (br.comment||"").trim()!=="";
   });
 }
 
