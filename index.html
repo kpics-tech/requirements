@@ -807,7 +807,8 @@ function examBoothPassed(uid, boothId){
   const items=examBoothItems(booth, examMemberYear(uid));
   const result=EXAM_RESULTS[uid]?.[boothId];
   if(!result) return false;
-  return items.length>0 && items.every(i => result.items[i.key]===true);
+  // 2段階評価（自立=2／助言あり=1）どちらでも「実施済み」として合否判定する
+  return items.length>0 && items.every(i => (result.items[i.key]||0)>0);
 }
 function examAllPassed(uid){
   return EXAM_BOOTHS.every(b => examBoothPassed(uid, b.id));
@@ -1622,7 +1623,7 @@ function renderExamChecklist(){
   html+=`<div class="sec-label">共通項目</div>`;
   booth.common.forEach(item=>{
     const key=`common__${item.id}`;
-    html+=examChecklistRow(key,item.label,result.items[key]===true);
+    html+=examChecklistRow(key,item.label,result.items[key]||0);
   });
 
   booth.sections.forEach(sec=>{
@@ -1630,7 +1631,7 @@ function renderExamChecklist(){
     html+=`<div class="sec-label" style="margin-top:16px;">${sec.name}</div>`;
     sec.items.forEach(item=>{
       const key=`${sec.id}__${item.id}`;
-      html+=examChecklistRow(key,item.label,result.items[key]===true);
+      html+=examChecklistRow(key,item.label,result.items[key]||0);
     });
   });
 
@@ -1643,27 +1644,41 @@ function renderExamChecklist(){
   container.innerHTML=html;
 }
 
-function examChecklistRow(key,label,checked){
+// score: 0=未実施 / 1=助言でできた / 2=自立してできた
+function examChecklistRow(key,label,score){
+  const s = score||0;
+  const mkBtn=(val,text,colorVar)=>{
+    const active = s===val;
+    return `<button type="button" onclick="toggleExamItem('${key}',${active?0:val})"
+      style="font-size:11px;font-weight:700;padding:5px 11px;border-radius:3px;cursor:pointer;white-space:nowrap;
+      font-family:'Noto Sans JP',sans-serif;transition:background .15s,color .15s;
+      border:1px solid ${active?`var(${colorVar})`:'var(--border-light)'};
+      background:${active?`var(${colorVar})`:'transparent'};
+      color:${active?'var(--black)':'var(--text-muted)'};">${text}</button>`;
+  };
   return `
-    <label style="display:flex;align-items:flex-start;gap:9px;padding:7px 2px;cursor:pointer;border-bottom:1px solid var(--border);">
-      <input type="checkbox" ${checked?'checked':''} onchange="toggleExamItem('${key}',this.checked)"
-        style="margin-top:2px;width:16px;height:16px;accent-color:var(--pass);cursor:pointer;flex-shrink:0;">
-      <span style="font-size:12.5px;color:${checked?'var(--pass)':'var(--text)'};line-height:1.5;">${label}</span>
-    </label>`;
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 2px;border-bottom:1px solid var(--border);">
+      <span style="font-size:12.5px;color:${s>0?'var(--text)':'var(--text-dim)'};line-height:1.5;flex:1;">${label}</span>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        ${mkBtn(1,'○ 助言','--orange')}
+        ${mkBtn(2,'◎ 自立','--pass')}
+      </div>
+    </div>`;
 }
 
-async function toggleExamItem(key,checked){
+async function toggleExamItem(key,newScore){
   const uid=_examCurrentUid, boothId=_examCurrentBooth;
   if(!uid||!boothId) return;
+  const prevScore=EXAM_RESULTS[uid][boothId].items[key]||0;
   const wasAllPassed=examAllPassed(uid);
-  EXAM_RESULTS[uid][boothId].items[key]=checked;
+  EXAM_RESULTS[uid][boothId].items[key]=newScore;
   renderExamChecklist();
   renderExamBoothList();
   renderExamDayMemberList();
-  const saved=await saveExamItemToDB(uid,boothId,key,checked);
+  const saved=await saveExamItemToDB(uid,boothId,key,newScore);
   if(!saved){
-    // 保存できなかったらチェックを元に戻す（保存済みだと誤解しないため）
-    EXAM_RESULTS[uid][boothId].items[key]=!checked;
+    // 保存できなかったら元の状態に戻す（保存済みだと誤解しないため）
+    EXAM_RESULTS[uid][boothId].items[key]=prevScore;
     renderExamChecklist(); renderExamBoothList(); renderExamDayMemberList();
     return;
   }
@@ -1785,13 +1800,18 @@ function renderExamResultCard(){
           border-bottom:1px solid rgba(138,100,32,.5);padding-bottom:1px;">このバッジについて</span>
       </div>
     </div>`:''}
-    ${certified?kpRetentionNotice():''}`;
+    ${certified?kpRetentionNotice():''}
+    <div style="display:flex;gap:14px;align-items:center;font-size:10.5px;color:var(--text-dim);margin-bottom:9px;padding:0 2px;">
+      <span><span style="color:var(--pass);font-size:12px;">◎</span> 自立してできた</span>
+      <span><span style="color:var(--orange);font-size:12px;">○</span> 助言でできた</span>
+      <span><span style="font-size:12px;">−</span> 未実施</span>
+    </div>`;
 
   EXAM_BOOTHS.forEach(b=>{
     const passed=examBoothPassed(uid,b.id);
     const result=EXAM_RESULTS[uid][b.id];
     const items=examBoothItems(b,examMemberYear(uid));
-    const doneCount=items.filter(i=>result.items[i.key]===true).length;
+    const doneCount=items.filter(i=>(result.items[i.key]||0)>0).length;
     const open=_examCardOpen.has(b.id);
 
     // 評価項目をセクション（共通項目／断面ごと）に束ねる
@@ -1806,17 +1826,19 @@ function renderExamResultCard(){
     if(open){
       detail=`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:4px;">`;
       groups.forEach(g=>{
-        const gDone=g.items.filter(i=>result.items[i.key]===true).length;
+        const gDone=g.items.filter(i=>(result.items[i.key]||0)>0).length;
         const gAll=gDone===g.items.length;
         detail+=`<div style="display:flex;align-items:center;justify-content:space-between;margin:11px 0 3px;">
             <span style="font-size:10px;color:var(--orange);letter-spacing:.06em;font-weight:700;">${kpEsc(g.name)}</span>
             <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:${gAll?'var(--pass)':'var(--text-dim)'};">${gDone}/${g.items.length}</span>
           </div>`;
         g.items.forEach(i=>{
-          const ok=result.items[i.key]===true;
+          const sc=result.items[i.key]||0;
+          const icon=sc===2?'◎':sc===1?'○':'−';
+          const iconColor=sc===2?'var(--pass)':sc===1?'var(--orange)':'var(--text-dim)';
           detail+=`<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;">
-              <span style="flex-shrink:0;width:13px;text-align:center;font-size:11px;line-height:1.6;color:${ok?'var(--pass)':'var(--text-dim)'};">${ok?'✓':'−'}</span>
-              <span style="font-size:11.5px;line-height:1.6;color:${ok?'var(--text)':'var(--text-dim)'};">${kpEsc(i.label)}</span>
+              <span style="flex-shrink:0;width:13px;text-align:center;font-size:11px;line-height:1.6;color:${iconColor};">${icon}</span>
+              <span style="font-size:11.5px;line-height:1.6;color:${sc>0?'var(--text)':'var(--text-dim)'};">${kpEsc(i.label)}${sc===1?' <span style="color:var(--orange);font-size:10px;">（助言あり）</span>':''}</span>
             </div>`;
         });
       });
@@ -2135,7 +2157,7 @@ async function checkCertOnce(manual){
   if(manual && btn){ btn.disabled=true; btn.textContent='確認中…'; }
   try{
     const [ecRes,efRes]=await Promise.all([
-      _supabase.from('exam_checklist').select('booth_id,item_key,checked').eq('uid',uid),
+      _supabase.from('exam_checklist').select('booth_id,item_key,checked,score').eq('uid',uid),
       _supabase.from('exam_feedback').select('booth_id,comment').eq('uid',uid),
     ]);
     // チェックとコメントは別々に扱う。片方が読めなくても、もう片方は反映する。
@@ -2145,7 +2167,8 @@ async function checkCertOnce(manual){
     } else if(ecRes.data){
       ecRes.data.forEach(row=>{
         if(!EXAM_RESULTS[uid]?.[row.booth_id]) return;
-        EXAM_RESULTS[uid][row.booth_id].items[row.item_key]=!!row.checked;
+        // scoreがあればそれを使う。無い古いデータはchecked=trueを「自立」扱いにして互換維持。
+        EXAM_RESULTS[uid][row.booth_id].items[row.item_key]=row.score||(row.checked?2:0);
       });
     }
     if(efRes.error){
@@ -2192,18 +2215,25 @@ function kpCertStyle(){
 // 部のロゴマーク。ナビにある画像をそのまま流用する（ファイルを重くしないため）。
 // 元画像は白背景で、ロゴ本体が中心からわずかにずれているので、
 // ロゴだけを正円に切り抜いて表示する。
+// ★ ロゴの円の中での左右位置の調整 ★
+// 数字を大きくするほどロゴが「右」に寄ります。0で真ん中寄り、最大80くらいまで。
+// （これ以上大きくするとロゴの右端が円から欠けてしまいます）
+const KP_LOGO_SHIFT_X = 45;
+
 function kpLogoMark(size){
   const el=document.querySelector('img.nav-logo');
   const src=el?el.src:'';
   // 元画像1206x1195のうち、ロゴが収まる正方形は (78,34) から一辺1090。
   // その正方形を円の大きさに合わせて拡大縮小し、はみ出す部分を隠す。
+  // 切り取り開始位置を左にずらすと、ロゴは円の中で右に動きます。
   const k=size/1090;
+  const cropX = 78 - KP_LOGO_SHIFT_X;
   return `<div style="width:${size}px;height:${size}px;overflow:hidden;border-radius:50%;
       position:relative;display:inline-block;vertical-align:middle;background:#fff;
       box-shadow:0 0 0 1px #8A6420,0 0 22px rgba(232,160,32,.4);">
     <img src="${src}" alt="K-PICS" style="position:absolute;
       width:${(1206*k).toFixed(1)}px;height:${(1195*k).toFixed(1)}px;
-      left:${(-78*k).toFixed(1)}px;top:${(-34*k).toFixed(1)}px;">
+      left:${(-cropX*k).toFixed(1)}px;top:${(-34*k).toFixed(1)}px;">
   </div>`;
 }
 
@@ -2848,10 +2878,11 @@ async function saveSeminarToDB(uid,domainId,seminarIdx){
 
 // ※Supabaseはデータベース側のエラーで例外を投げず {error} を返す。
 //   try/catchだけでは検知できないため、必ず error を見ること。
-async function saveExamItemToDB(uid,boothId,itemKey,checked){
+async function saveExamItemToDB(uid,boothId,itemKey,score){
   try {
+    // checked列は互換用に残す（score>0なら実施済み扱い）。scoreは1(助言)/2(自立)、未実施はnull。
     const {error}=await _supabase.from('exam_checklist').upsert({
-      uid, booth_id:boothId, item_key:itemKey, checked,
+      uid, booth_id:boothId, item_key:itemKey, checked:score>0, score:score>0?score:null,
       checked_by:window.CURRENT_UID, updated_at:new Date().toISOString(),
     },{onConflict:'uid,booth_id,item_key'});
     if(error){ showToast('⚠ 保存できていません: '+error.message,'error'); return false; }
@@ -3101,7 +3132,8 @@ async function loadFromDB(){
     catch(e){ examFeedbacks=null; showToast('確認者コメントを読み込めませんでした: '+(e.message||e),'error'); }
     if(examChecks) examChecks.forEach(row=>{
       if(!EXAM_RESULTS[row.uid]?.[row.booth_id]) return;
-      EXAM_RESULTS[row.uid][row.booth_id].items[row.item_key]=!!row.checked;
+      // scoreがあればそれを使う。無い古いデータはchecked=trueを「自立」扱いにして互換維持。
+      EXAM_RESULTS[row.uid][row.booth_id].items[row.item_key]=row.score||(row.checked?2:0);
     });
     if(examFeedbacks) examFeedbacks.forEach(row=>{
       if(!EXAM_RESULTS[row.uid]?.[row.booth_id]) return;
