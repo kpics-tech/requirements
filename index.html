@@ -260,12 +260,7 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <input class="field" type="email" id="signup-email" placeholder="example@med.ac.jp">
       <div class="auth-field-label">パスワード（6文字以上）</div>
       <input class="field" type="password" id="signup-password" placeholder="パスワード">
-      <div class="auth-field-label" style="display:flex;align-items:center;gap:6px;">
-        招待コード
-        <span style="font-size:10px;color:var(--text-dim);">確認者の方のみ入力</span>
-      </div>
-      <input class="field" type="text" id="signup-invite" placeholder="（部員の方は空欄でOK）">
-      <div class="auth-error" id="signup-error"></div>
+            <div class="auth-error" id="signup-error"></div>
       <button class="auth-btn" id="signup-btn" onclick="doSignup()">登録する</button>
     </div>
   </div>
@@ -2910,7 +2905,7 @@ async function saveSubjectNameToDB(uid,domainId,si,name){
 // ================================================================
 // ログイン機能
 // ================================================================
-const REVIEWER_INVITE_CODE='KPICS-REVIEWER-2026';
+// 確認者（reviewer）は登録時には決めない。管理者がSupabaseのprofilesのroleを直接変更して設定する。
 
 function switchAuthTab(tab){
   document.getElementById('form-login').style.display  = tab==='login'  ? 'block':'none';
@@ -2938,13 +2933,11 @@ async function doSignup(){
   const year=parseInt(document.getElementById('signup-year').value);
   const email=document.getElementById('signup-email').value.trim();
   const password=document.getElementById('signup-password').value;
-  const invite=document.getElementById('signup-invite').value.trim();
   const errEl=document.getElementById('signup-error');
   const btn=document.getElementById('signup-btn');
   if(!name||!email||!password){ errEl.textContent='名前・メールアドレス・パスワードは必須です'; errEl.classList.add('show'); return; }
   if(password.length<6){ errEl.textContent='パスワードは6文字以上にしてください'; errEl.classList.add('show'); return; }
-  if(invite&&invite!==REVIEWER_INVITE_CODE){ errEl.textContent='招待コードが正しくありません'; errEl.classList.add('show'); return; }
-  const role=(invite===REVIEWER_INVITE_CODE)?'reviewer':'member';
+  const role='member';
   btn.disabled=true; btn.textContent='登録中...';
   const {data,error}=await _supabase.auth.signUp({email,password});
   if(error){ btn.disabled=false; btn.textContent='登録する'; errEl.textContent='登録に失敗しました: '+error.message; errEl.classList.add('show'); return; }
