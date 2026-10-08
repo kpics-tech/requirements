@@ -1302,7 +1302,7 @@ async function handleUpload(domainId,si,viewId,input){
     const imageUrl=await uploadImageToStorage(uid,domainId,si,viewId,compressed);
     await saveSubmissionToDB(uid,domainId,si,viewId,'pending','判定待ちです。担当者が確認します。',imageUrl);
     const vs=PROGRESS[uid][domainId].subjects[si].views[viewId];
-    vs.fileDataUrl=imageUrl; vs.status="pending"; vs.feedback="判定待ちです。担当者が確認します。";
+    vs.fileDataUrl=await kpSign(imageUrl); vs.status="pending"; vs.feedback="判定待ちです。担当者が確認します。";
     refreshImageStatus(domainId,si,viewId);
     updateDomainMeta(domainId);
     hideToast(); showToast('アップロード完了！','success');
@@ -1894,6 +1894,22 @@ function kpStoragePath(url){
   if(i<0) return null;
   try{ return decodeURIComponent(url.slice(i+'/echo-images/'.length).split('?')[0]); }
   catch(e){ return null; }
+}
+
+// 画像を開くための「期限つきURL」を作る（保存庫は非公開）。失敗したら元のURLを返す
+async function kpSign(url){
+  const p=kpStoragePath(url);
+  if(!p) return url||null;
+  try{
+    const {data,error}=await _supabase.storage.from('echo-images').createSignedUrl(p,60*60*6);
+    return (error||!data)?url:data.signedUrl;
+  }catch(e){ return url; }
+}
+// DBには、期限つきURLではなく、いつもの形のURLだけを保存する
+function kpCanonical(url){
+  const p=kpStoragePath(url);
+  if(!p) return url;
+  return _supabase.storage.from('echo-images').getPublicUrl(p).data.publicUrl;
 }
 
 // あと何日で消えるか（消える予定がなければ null）
@@ -2861,7 +2877,7 @@ async function saveSubmissionToDB(uid,domainId,si,viewId,status,feedback,imageUr
   // 画像URLが手元にあるときだけ書き込む。
   // 判定保存のたびに image_url を上書きすると、画像URLの取得に失敗していた場合に
   // 保存済みのURLをnullで消してしまうため（画像本体は残るが行方不明になる）。
-  if(imageUrl) payload.image_url=imageUrl;
+  if(imageUrl) payload.image_url=kpCanonical(imageUrl);
   const {error}=await _supabase.from('submissions').upsert(payload,
     {onConflict:'uid,domain_id,subject_idx,view_id'});
   if(error) throw new Error('データの保存に失敗しました: '+error.message);
@@ -3149,15 +3165,15 @@ async function loadFromDB(){
       if(PROGRESS[row.uid]?.[row.domain_id]?.subjects[row.subject_idx])
         PROGRESS[row.uid][row.domain_id].subjects[row.subject_idx].name=row.name||'';
     });
-    if(submissions) submissions.forEach(row=>{
+    if(submissions) await Promise.all(submissions.map(async row=>{
       if(!PROGRESS[row.uid]?.[row.domain_id]) return;
       const subj=PROGRESS[row.uid][row.domain_id].subjects[row.subject_idx];
       if(!subj?.views[row.view_id]) return;
       subj.views[row.view_id].status=row.status;
       subj.views[row.view_id].feedback=row.feedback||'';
       // 確認者モードは image_url を含まないクエリのため undefined のまま（後で個別取得）
-      if(row.image_url !== undefined) subj.views[row.view_id].fileDataUrl=row.image_url||null;
-    });
+      if(row.image_url !== undefined) subj.views[row.view_id].fileDataUrl=row.image_url?await kpSign(row.image_url):null;
+    }));
     if(pDates) pDates.forEach(row=>{
       const d=DOMAINS.find(x=>x.id===row.domain_id);
       if(!d) return;
@@ -3192,12 +3208,12 @@ async function loadImagesForMember(uid){
       .from('submissions')
       .select('domain_id,subject_idx,view_id,image_url')
       .eq('uid',uid));
-    if(data) data.forEach(row=>{
+    if(data) await Promise.all(data.map(async row=>{
       if(!PROGRESS[uid]?.[row.domain_id]) return;
       const subj=PROGRESS[uid][row.domain_id].subjects[row.subject_idx];
       if(!subj?.views[row.view_id]) return;
-      subj.views[row.view_id].fileDataUrl=row.image_url||null;
-    });
+      subj.views[row.view_id].fileDataUrl=row.image_url?await kpSign(row.image_url):null;
+    }));
   } catch(e){
     // 取得失敗してもクラッシュしない。次回クリック時に再試行できるようSetから除外
     _imagesLoadedFor.delete(uid);
