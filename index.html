@@ -255,7 +255,13 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <div class="auth-field-label">名前（フルネーム）</div>
       <input class="field" type="text" id="signup-name" placeholder="山田 太郎">
       <div class="auth-field-label">学年</div>
-      <input class="field" type="number" id="signup-year" placeholder="5" min="1" max="6">
+      <select class="field" id="signup-year">
+        <option value="">選択してください</option>
+        <option value="1">1年</option><option value="2">2年</option><option value="3">3年</option>
+        <option value="4">4年</option><option value="5">5年</option><option value="6">6年</option>
+        <option value="9">研修医1年目</option><option value="10">研修医2年目</option>
+        <option value="7">先生</option><option value="8">その他</option>
+      </select>
       <div class="auth-field-label">メールアドレス</div>
       <input class="field" type="email" id="signup-email" placeholder="example@med.ac.jp">
       <div class="auth-field-label">パスワード（6文字以上）</div>
@@ -879,7 +885,7 @@ function renderDomainList(){
   container.innerHTML="";
   const uid=window.CURRENT_UID;
   if(!uid || !PROGRESS[uid]) return; // 未初期化ガード
-  // 血管穿刺の自主練習記録（練習日の入力等）はスチューデントドクター（5・6年生）限定。
+  // 血管穿刺の自主練習記録（練習日の入力等）はスチューデントドクター（5年生以上）限定。
   // ただし「セミナー受講」ボタンは全学年が押せるよう、カード自体は全員に表示する。
   const isStudentDoctor = (window.CURRENT_YEAR||0) >= 5;
   const visibleDomains = DOMAINS;
@@ -895,7 +901,7 @@ function renderDomainList(){
     // UIの種類を切り替え
     const innerBodyHTML = isVascularRestricted
       ? `<div style="font-size:11.5px;color:var(--text-dim);margin-top:12px;line-height:1.6;">
-          💉 血管穿刺の自主練習記録はStudent Doctor（5・6年生）が対象です。<br>
+          💉 血管穿刺の自主練習記録はStudent Doctor（5年生以上）が対象です。<br>
           上の「セミナー受講」だけ選択しておいてください。
         </div>`
       : domain.isSimplePractice
@@ -1391,7 +1397,7 @@ function renderMemberList(){
           font-family:'Bebas Neue',sans-serif;font-size:15px;color:var(--black);">${m.name[0]}</div>
         <div>
           <div style="font-size:14px;font-weight:700;">${m.name}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${m.year}年生</div>
+          <div style="font-size:11px;color:var(--text-muted);">${yearLabel(m.year)}</div>
         </div>
         <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
           ${loadedBadge}
@@ -1551,7 +1557,7 @@ function renderExamDayMemberList(){
       <div style="display:flex;align-items:center;justify-content:space-between;">
         <div>
           <div style="font-size:14px;font-weight:700;">${m.name}${canEntry(m.uid)?'':' <span style="font-size:10px;color:var(--keep);">（資格未充足）</span>'}</div>
-          <div style="font-size:11px;color:${m.year?'var(--text-muted)':'var(--keep)'};">${m.year?m.year+'年生':'⚠ 学年が未設定です'}</div>
+          <div style="font-size:11px;color:${m.year?'var(--text-muted)':'var(--keep)'};">${m.year?yearLabel(m.year):'⚠ 学年が未設定です'}</div>
         </div>
         ${certified
           ? `<span class="done-badge">🏅 認定合格</span>`
@@ -2055,7 +2061,7 @@ async function loadStorageUsage(){
           padding:10px 12px;${i>0?'border-top:1px solid var(--border-light);':''}">
           <div style="min-width:0;">
             <div style="font-size:12.5px;font-weight:700;">${kpEsc(m.name)}</div>
-            <div style="font-size:10.5px;color:var(--text-dim);">${m.year?m.year+'年生 ・ ':''}${m.n}件 ・ 約${size}MB</div>
+            <div style="font-size:10.5px;color:var(--text-dim);">${m.year?yearLabel(m.year)+' ・ ':''}${m.n}件 ・ 約${size}MB</div>
           </div>
           <button onclick="adminDeleteImages('${m.uid}','${kpEsc(m.name).replace(/'/g,'')}',${m.n})"
             style="flex-shrink:0;background:transparent;border:1px solid var(--border-light);
@@ -2357,7 +2363,7 @@ function showCertificateCard(uid){
   const old=document.getElementById('kp-certificate-overlay'); if(old) old.remove();
   const m=MEMBERS.find(x=>x.uid===uid);
   const name=kpEsc(m?m.name:'受験者');
-  const year=(m&&m.year)?`${m.year}年生`:'';
+  const year=(m&&m.year)?yearLabel(m.year):'';
   const serial=kpCertSerial(uid);
   // 認定日は本人の記録から取る（次回以降の試験でも正しく出る）
   const ca = (window.CURRENT_PROFILE && window.CURRENT_PROFILE.certified_at) || null;
@@ -2794,7 +2800,7 @@ function showEntryCard(uid){
           </div>
           <div>
             <div style="font-size:9px;color:var(--text-dim);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px;">学年</div>
-            <div style="font-size:20px;font-weight:900;color:#F0F0F0;">${year}年生</div>
+            <div style="font-size:20px;font-weight:900;color:#F0F0F0;">${yearLabel(year)}</div>
           </div>
         </div>
         <div style="background:rgba(232,160,32,.07);border:1px solid rgba(232,160,32,.25);border-radius:4px;padding:14px;margin-bottom:16px;">
@@ -2988,6 +2994,18 @@ async function doLogout(){ stopCertWatch(); await _supabase.auth.signOut(); loca
 // ================================================================
 window.CURRENT_UID  = null;
 window.CURRENT_ROLE = 'member';
+// 学年の表示名。DBには数字で保存（1〜6=学年、7=先生、8=その他、9=研修医1年目、10=研修医2年目）。
+// 「5以上＝Student Doctor」の判定は、先生・研修医も含めて従来どおり数字の大小で行う。
+function yearLabel(y){
+  const n = parseInt(y, 10);
+  if(!n) return '';
+  if(n >= 1 && n <= 6) return n + '年生';
+  if(n === 7) return '先生';
+  if(n === 8) return 'その他';
+  if(n === 9) return '研修医1年目';
+  if(n === 10) return '研修医2年目';
+  return '';
+}
 window.CURRENT_YEAR = null;
 
 // 1時間無操作で自動ログアウト
@@ -3037,7 +3055,7 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     const subEl   =document.querySelector('#page-member .main > div:first-child div:nth-child(2) div:last-child');
     if(avatarEl && name) avatarEl.textContent=name[0];
     if(nameEl) nameEl.textContent=name;
-    if(subEl)  subEl.textContent=`${year||'?'}年生 ・ ${role==='reviewer'?'確認者':'部員'}`;
+    if(subEl)  subEl.textContent=`${year?yearLabel(year):'?年生'} ・ ${role==='reviewer'?'確認者':'部員'}`;
 
     initProgress();
     initExamResults();
@@ -3067,11 +3085,11 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
 // 学年の編集（スチューデントドクター判定に影響するため、変更後にタブ表示を再描画）
 async function editYear(){
   const current = window.CURRENT_YEAR || '';
-  const input = prompt('学年を入力してください（1〜6の数字）', current);
+  const input = prompt('番号を入力してください\n1〜6：学年　9：研修医1年目　10：研修医2年目　7：先生　8：その他', current);
   if(input===null) return; // キャンセル
   const newYear = parseInt(input);
-  if(isNaN(newYear) || newYear<1 || newYear>6){
-    alert('学年は1〜6の数字で入力してください。');
+  if(isNaN(newYear) || newYear<1 || newYear>10){
+    alert('1〜10の番号で入力してください。');
     return;
   }
   const uid = window.CURRENT_UID;
@@ -3084,7 +3102,7 @@ async function editYear(){
   const m = MEMBERS.find(x=>x.uid===uid);
   if(m) m.year = newYear;
   const subEl = document.getElementById('profile-year-sub');
-  if(subEl) subEl.textContent = `${newYear}年生 ・ ${window.CURRENT_ROLE==='reviewer'?'確認者':'部員'}`;
+  if(subEl) subEl.textContent = `${yearLabel(newYear)} ・ ${window.CURRENT_ROLE==='reviewer'?'確認者':'部員'}`;
   renderDomainList();  // 血管穿刺タブの表示/非表示を即時反映
   updateProgressBar();
 }
