@@ -165,6 +165,7 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
 .member-card:hover{border-color:var(--orange);box-shadow:0 0 0 1px rgba(232,160,32,.15);}
 .rev-img-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:7px;}
 .rev-img-card{background:var(--card);border:1px solid var(--border);border-radius:3px;overflow:hidden;}
+.rev-img-card.is-pending{border-color:var(--orange);box-shadow:0 0 0 1px rgba(232,160,32,.45);}
 .rev-img-top{aspect-ratio:4/3;background:var(--black);display:flex;align-items:center;justify-content:center;overflow:hidden;}
 .rev-img-top img{width:100%;height:100%;object-fit:cover;}
 .rev-img-bottom{padding:7px;display:flex;flex-direction:column;gap:5px;}
@@ -330,6 +331,7 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <button onclick="editYear()" title="学年を編集" style="margin-left:auto;background:none;border:1px solid var(--border-light);color:var(--text-muted);font-size:11px;padding:4px 10px;border-radius:3px;cursor:pointer;">学年を編集</button>
     </div>
 
+    <div id="carryover-banner"></div>
     <div id="domain-list"></div>
 
     <div style="margin-top:22px;">
@@ -349,12 +351,13 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <div style="font-size:18px;font-weight:700;">提出画像の判定</div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">部員を選択して提出画像を判定してください。</div>
     </div>
+    <div id="reviewer-summary"></div>
     <div class="member-grid" id="member-list"></div>
     <div id="review-area" style="display:none;margin-top:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <div>
           <div id="review-name" style="font-size:16px;font-weight:700;"></div>
-          <div style="font-size:11px;color:var(--text-muted);">提出画像一覧</div>
+          <div id="review-sub" style="font-size:11px;color:var(--text-muted);">提出画像一覧</div>
         </div>
         <button onclick="closeReview()" style="font-size:11px;background:var(--card);border:1px solid var(--border-light);color:var(--text-muted);padding:5px 11px;border-radius:2px;cursor:pointer;">← 戻る</button>
       </div>
@@ -370,7 +373,8 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <div>
         <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;">確認者モード</div>
         <div style="font-size:18px;font-weight:700;">部員 進捗一覧表</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">全部員の提出状況をひと目で確認できます。</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">全部員の提出状況をひと目で確認できます。判定待ちがある人が上に並びます。</div>
+        <div id="matrix-cohort-legend" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:7px;"></div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-muted);">
@@ -400,8 +404,9 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
           font-family:'Noto Sans JP',sans-serif;white-space:nowrap;">使用量を調べる</button>
       </div>
       <div style="font-size:11px;color:var(--text-dim);margin-top:7px;line-height:1.75;">
-        無料で使える保管容量は 1GB です。卒業した部員や、しばらく使っていない部員の画像を消すと空きが増えます。
-        画像を消しても、Pass判定・試験結果・認定証は残ります。
+        無料で使える保管容量は 1GB です。容量が足りなくなったら、卒業した部員の画像から消してください。
+        画像を消しても、Pass判定・試験結果・認定証は残ります。<br>
+        <span style="color:var(--orange-light);">「途中」の部員は、次の試験で続きから再開できるように画像を残しています。できるだけ消さないでください。</span>
       </div>
       <div id="storage-usage" style="margin-top:14px;"></div>
     </div>
@@ -727,19 +732,34 @@ function examBoothItems(booth, memberYear){
 const MEMBERS = []; // ログイン時にSupabaseの実データで構築される
 
 // ================================================================
-// 前回（2026年8月期）の記録を引き継ぐための仕組み
-//  ・前回のセミナー受講は seminar_idx が 0〜2 で保存されている
-//  ・今回から保存する値は「+10」して区別する（0〜2＝前回、10以上＝今回）
-//  ・前回の「心臓・肺・下肢静脈」は今回「心臓」「肺・下肢静脈」に分かれたので、
-//    前回の受講・撮像日・画像は両方に反映する
+// 前の期の記録を引き継ぐための仕組み（途中で休んだ人も、次の期に続きから再開できる）
+//
+//  セミナー受講は seminar_idx に「期の番号×10 ＋ 日程の番号」で保存している
+//    0〜9   … 第0期（2026年8月期）
+//    10〜19 … 第1期（2027年3月期）  ← 今の期（KP_CONFIG.termNo = 1）
+//    20〜29 … 第2期（次の期） …
+//  今の期より前の受講記録は「受講済み」として数え、そのまま引き継ぐ。
+//  画像・撮像日・練習記録は期に関係なく保存されているので、消さない限り残る。
+//
+//  ★ 次の期に移るとき ★
+//   1. 下の SEMINAR_HISTORY に、今の DOMAINS の seminarDates をコピーして
+//      「今の期の番号」で追加する（例：1: {name:"2027年3月期", dates:{...}}）
+//   2. KP_CONFIG.termNo を +1 する
+//   3. DOMAINS の seminarDates を新しい日程に書き換える
+//
+//  ※第0期の「心臓・肺・下肢静脈」は第1期から「心臓」「肺・下肢静脈」に分かれたので、
+//    第0期の受講・撮像日・画像は両方に反映する
 // ================================================================
-const SEM_OFFSET = 10;
-const LEGACY_SEM_LABELS = {
-  abdomen:["6/10（水）","6/16（火）","個別レクチャー"],
-  cardiac:["6/30（火）","7/7（火）","個別レクチャー"],
-  vascular:["6/23（火）","7/15（水）","個別レクチャー"],
-  bowel:["7/1（水）","7/28（火）","個別レクチャー"],
+const SEMINAR_HISTORY = {
+  0: { name:"8月期", dates:{
+    abdomen:["6/10（水）","6/16（火）","個別レクチャー"],
+    cardiac:["6/30（火）","7/7（火）","個別レクチャー"],
+    vascular:["6/23（火）","7/15（水）","個別レクチャー"],
+    bowel:["7/1（水）","7/28（火）","個別レクチャー"],
+  }},
 };
+function kpSemOffset(){ return KP_CONFIG.termNo*10; }
+function kpTermName(term){ return SEMINAR_HISTORY[term]?.name || '前の期'; }
 function kpLegacyViewDomain(domainId, viewId){
   // 前回は肺・下肢静脈の画像も domain_id="cardiac" で保存されていた
   if(domainId==='cardiac' && /^(lung_|dvt_)/.test(viewId||'')) return 'lung';
@@ -768,8 +788,8 @@ function seminarLabel(uid,domain){
   if(!p) return null;
   if(p.seminarSelected!==null && p.seminarSelected!==undefined) return domain.seminarDates[p.seminarSelected];
   if(p.legacySeminar!==null && p.legacySeminar!==undefined){
-    const arr=LEGACY_SEM_LABELS[p.legacyFrom||domain.id];
-    return '前回 '+(arr?arr[p.legacySeminar]:'受講済み');
+    const arr=SEMINAR_HISTORY[p.legacyTerm]?.dates?.[p.legacyFrom||domain.id];
+    return kpTermName(p.legacyTerm)+' '+(arr&&arr[p.legacySeminar]?arr[p.legacySeminar]:'受講済み');
   }
   return null;
 }
@@ -792,12 +812,12 @@ function initProgress() {
       if(d.isSimplePractice){
         // 血管穿刺：被検者なし、練習日だけ（最初3枠）
         PROGRESS[m.uid][d.id] = {
-          seminarSelected: null, legacySeminar: null, legacyFrom: null,
+          seminarSelected: null, legacySeminar: null, legacyTerm: null, legacyFrom: null,
           simpleDates: ["","",""], // 練習日（3回＋追加可能）
         };
       } else {
         PROGRESS[m.uid][d.id] = {
-          seminarSelected: null, legacySeminar: null, legacyFrom: null,
+          seminarSelected: null, legacySeminar: null, legacyTerm: null, legacyFrom: null,
           subjects: [0,1,2].map(() => ({
             name: "",
             views: Object.fromEntries(d.views.map(v => [v.id, {status:"unsubmitted", feedback:"", fileDataUrl:null}])),
@@ -925,7 +945,89 @@ const KP_CONFIG = {
   examDateTime : "2027-03-24T09:00:00",   // ※開始時刻は未定のため仮で9:00。決まったら書き換えてください
   examDateLabel: "2027年3月24日（水）",
   keepDays     : 30,
+
+  // 今の期の番号（0 = 2026年8月期、1 = 2027年3月期）。次の期に移るときは +1 する
+  termNo       : 1,
+
+  // 確認者画面で、アプリ登録の時期ごとに色分けする区切り
+  //  until … この日時までに登録した人がこのグループ（最後のグループは null ＝ それ以降すべて）
+  //  色は、判定の色（緑＝Pass・赤＝Keep・オレンジ＝判定待ち）とかぶらない色にしてある
+  cohorts: [
+    { label:"8/2までに登録", until:"2026-08-02T23:59:59+09:00", color:"#5AA9E6" },
+    { label:"8/3以降に登録", until:null,                          color:"#B48CF0" },
+  ],
 };
+
+function kpMemberFromProfile(p){
+  return { uid:p.id, name:p.name, year:p.year||'', createdAt:p.created_at||null, certified:!!p.is_certified };
+}
+
+// ================================================================
+// 登録時期のグループ分け
+// ================================================================
+const KP_COHORT_UNKNOWN = { label:"登録日不明", color:"#666666", idx:99 };
+function kpCohort(m){
+  if(!m || !m.createdAt) return KP_COHORT_UNKNOWN;
+  const t=new Date(m.createdAt).getTime();
+  const list=KP_CONFIG.cohorts;
+  for(let i=0;i<list.length;i++){
+    if(list[i].until===null || t<=new Date(list[i].until).getTime()) return {...list[i], idx:i};
+  }
+  return KP_COHORT_UNKNOWN;
+}
+function kpCohortChip(m){
+  const c=kpCohort(m);
+  return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:${c.color};white-space:nowrap;">
+    <span style="width:7px;height:7px;border-radius:50%;background:${c.color};display:inline-block;"></span>${c.label}</span>`;
+}
+function kpCohortLegend(){
+  const items=[...KP_CONFIG.cohorts.map((c,i)=>({...c,idx:i}))];
+  if(MEMBERS.some(m=>!m.createdAt)) items.push(KP_COHORT_UNKNOWN);
+  return items.map(c=>`<span style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text-muted);white-space:nowrap;">
+    <span style="width:10px;height:10px;border-radius:2px;background:${c.color};display:inline-block;"></span>${c.label}</span>`).join('');
+}
+
+// ================================================================
+// 判定待ち（画像は提出済み・確認者がまだ判定していない）の数え方
+// ================================================================
+function kpPendingInfo(uid){
+  let n=0, oldest=null;
+  const prog=PROGRESS[uid];
+  if(!prog) return {n,oldest};
+  DOMAINS.forEach(d=>{
+    if(!d.views || d.views.length===0 || !prog[d.id]?.subjects) return;
+    prog[d.id].subjects.forEach(s=>d.views.forEach(v=>{
+      const vs=s.views[v.id];
+      if(vs?.status!=='pending') return;
+      n++;
+      if(vs.updatedAt && (!oldest || vs.updatedAt<oldest)) oldest=vs.updatedAt;
+    }));
+  });
+  return {n,oldest};
+}
+// 「◯日前から」「◯時間前から」
+function kpAgo(iso){
+  if(!iso) return '';
+  const h=(Date.now()-new Date(iso).getTime())/3600000;
+  if(h<1) return '1時間以内';
+  if(h<24) return Math.floor(h)+'時間前から';
+  return Math.floor(h/24)+'日前から';
+}
+// 確認者画面の並び順：判定待ちがある人が上（待ち時間が長い人ほど上）→ 残りは登録時期・名前順
+function kpSortedMembers(){
+  return MEMBERS.slice().sort((a,b)=>{
+    const pa=kpPendingInfo(a.uid), pb=kpPendingInfo(b.uid);
+    if((pa.n>0)!==(pb.n>0)) return pa.n>0 ? -1 : 1;
+    if(pa.n>0 && pb.n>0){
+      if(pa.oldest && pb.oldest && pa.oldest!==pb.oldest) return pa.oldest<pb.oldest ? -1 : 1;
+      if(!!pa.oldest!==!!pb.oldest) return pa.oldest ? -1 : 1;
+      if(pa.n!==pb.n) return pb.n-pa.n;
+    }
+    const ca=kpCohort(a).idx, cb=kpCohort(b).idx;
+    if(ca!==cb) return ca-cb;
+    return String(a.name||'').localeCompare(String(b.name||''),'ja');
+  });
+}
 
 // ================================================================
 // COUNTDOWN + PROGRESS
@@ -968,11 +1070,44 @@ DOMAINS.forEach(d => { activeSubject[d.id]=0; });
 // ================================================================
 // RENDER DOMAIN LIST
 // ================================================================
+// 前の期から続けている人へのお知らせ（記録が引き継がれていることを伝える）
+function kpCarryOverKey(uid){ return `kpics_carryover_hide_${uid}_t${KP_CONFIG.termNo}`; }
+function hideCarryOver(){
+  try{ localStorage.setItem(kpCarryOverKey(window.CURRENT_UID),'1'); }catch(e){}
+  renderCarryOverBanner();
+}
+function renderCarryOverBanner(){
+  const box=document.getElementById("carryover-banner");
+  const uid=window.CURRENT_UID;
+  if(!box) return;
+  box.innerHTML="";
+  if(!uid || !PROGRESS[uid] || window.CURRENT_ROLE!=='member') return;
+  if(window.CURRENT_PROFILE?.is_certified) return;
+  try{ if(localStorage.getItem(kpCarryOverKey(uid))==='1') return; }catch(e){}
+  const hasPastSeminar=DOMAINS.some(d=>PROGRESS[uid][d.id]?.legacySeminar!=null);
+  const me=MEMBERS.find(m=>m.uid===uid);
+  const early=kpCohort(me).idx===0;
+  const hasAnyRecord=seminarCount(uid)>0 || DOMAINS.some(d=>PROGRESS[uid][d.id]?.subjects?.some(sj=>
+    Object.values(sj.views||{}).some(v=>v.status!=='unsubmitted')));
+  if(!hasPastSeminar && !(early && hasAnyRecord)) return;
+  box.innerHTML=`
+    <div style="background:var(--card);border:1px solid var(--border-light);border-left:3px solid var(--orange);
+      border-radius:4px;padding:12px 14px;margin-bottom:12px;font-size:12px;line-height:1.75;color:var(--text-muted);">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+        <div style="color:var(--text);font-weight:700;margin-bottom:3px;">前回までの記録はそのまま残っています</div>
+        <button onclick="hideCarryOver()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;">✕</button>
+      </div>
+      これまでに受けたセミナーと、Passした画像は引き継がれています。足りない分だけ進めれば受験できます。<br>
+      <span style="color:var(--orange-light);">セミナー ${seminarCount(uid)}/${requiredSeminarDomains().length}　・　キー画像Pass ${entryPassCount(uid)}/${entryTotalViews()}</span>
+    </div>`;
+}
+
 function renderDomainList(){
   const container=document.getElementById("domain-list");
   container.innerHTML="";
   const uid=window.CURRENT_UID;
   if(!uid || !PROGRESS[uid]) return; // 未初期化ガード
+  renderCarryOverBanner();
   // 血管穿刺の自主練習記録（練習日の入力等）はスチューデントドクター（5年生以上）限定。
   // ただし「セミナー受講」ボタンは全学年が押せるよう、カード自体は全員に表示する。
   const isStudentDoctor = (window.CURRENT_YEAR||0) >= 5;
@@ -1024,7 +1159,7 @@ function renderDomainList(){
             <span style="font-size:11px;color:var(--text-dim);">いずれか1つを選択</span>
           </div>
           ${(prog.legacySeminar!=null && prog.seminarSelected===null)
-            ? `<div style="font-size:11px;color:var(--pass);margin-top:7px;line-height:1.6;">✓ 前回（8月期）の受講記録があります（${seminarLabel(uid,domain).replace('前回 ','')}）。今回も受講済みとして数えます。</div>`
+            ? `<div style="font-size:11px;color:var(--pass);margin-top:7px;line-height:1.6;">✓ ${kpTermName(prog.legacyTerm)}の受講記録があります（${seminarLabel(uid,domain)}）。今回も受講済みとして数えるので、受け直さなくても大丈夫です。</div>`
             : ''}
           ${innerBodyHTML}
         </div>
@@ -1325,7 +1460,6 @@ function switchSubject(domainId,si){
 function selectSeminar(domainId,idx){
   const uid = window.CURRENT_UID;
   PROGRESS[uid][domainId].seminarSelected=idx;
-  PROGRESS[uid][domainId].legacySeminar=null;   // 今回の日程を選んだら前回の記録は置き換わる
   DOMAINS.find(d=>d.id===domainId).seminarDates.forEach((_,i)=>{
     const btn=document.getElementById(`sb-${domainId}-${i}`);
     if(btn) btn.className=`sem-btn ${i===idx?"selected":""}`;
@@ -1426,7 +1560,7 @@ async function handleUpload(domainId,si,viewId,input){
     const imageUrl=await uploadImageToStorage(uid,domainId,si,viewId,compressed);
     await saveSubmissionToDB(uid,domainId,si,viewId,'pending','判定待ちです。担当者が確認します。',imageUrl);
     const vs=PROGRESS[uid][domainId].subjects[si].views[viewId];
-    vs.fileDataUrl=await kpSign(imageUrl); vs.status="pending"; vs.feedback="判定待ちです。担当者が確認します。";
+    vs.fileDataUrl=await kpSign(imageUrl); vs.status="pending"; vs.feedback="判定待ちです。担当者が確認します。"; vs.updatedAt=new Date().toISOString();
     refreshImageStatus(domainId,si,viewId);
     updateDomainMeta(domainId);
     hideToast(); showToast('アップロード完了！','success');
@@ -1495,36 +1629,148 @@ function showPage(page){
 // ================================================================
 // REVIEWER PAGE
 // ================================================================
+// 確認者ページの表示切り替え（全員 / 判定待ちの人だけ）
+let _reviewFilter='all';
+function setReviewFilter(f){ _reviewFilter=f; renderMemberList(); }
+
+// 他の部員が新しく提出した画像を読み込み直す
+async function refreshReviewerData(){
+  const btn=document.getElementById('reviewer-refresh');
+  if(btn){ btn.disabled=true; btn.textContent='読み込み中…'; }
+  try{
+    const {data:profiles,error}=await _supabase.from('profiles').select('*').eq('role','member');
+    if(error) throw error;
+    if(profiles){
+      MEMBERS.length=0;
+      profiles.forEach(pr=>MEMBERS.push(kpMemberFromProfile(pr)));
+      initProgress();
+      initExamResults();
+    }
+    _imagesLoadedFor.clear();   // 新しい画像があるかもしれないので、開くときに取り直す
+    await loadFromDB();
+    renderMemberList();
+  }catch(e){
+    showToast('読み込みに失敗しました: '+(e.message||e),'error');
+  }finally{
+    const b=document.getElementById('reviewer-refresh');
+    if(b){ b.disabled=false; b.textContent='↻ 最新の提出を読み込む'; }
+  }
+}
+
+function renderReviewerSummary(){
+  const box=document.getElementById("reviewer-summary");
+  if(!box) return;
+  let people=0, imgs=0;
+  MEMBERS.forEach(m=>{ const p=kpPendingInfo(m.uid); if(p.n>0){ people++; imgs+=p.n; } });
+  const fbtn=(f,label)=>`<button onclick="setReviewFilter('${f}')"
+    style="padding:6px 12px;font-size:11.5px;font-weight:700;border-radius:2px;cursor:pointer;
+    font-family:'Noto Sans JP',sans-serif;white-space:nowrap;
+    border:1px solid ${_reviewFilter===f?'var(--orange)':'var(--border-light)'};
+    background:${_reviewFilter===f?'var(--orange)':'transparent'};
+    color:${_reviewFilter===f?'var(--black)':'var(--text-muted)'};">${label}</button>`;
+  box.innerHTML=`
+    <div style="background:${people>0?'var(--pending-bg)':'var(--card)'};
+      border:1px solid ${people>0?'var(--pending-border)':'var(--border)'};
+      border-radius:4px;padding:12px 14px;margin-bottom:10px;display:flex;align-items:center;
+      justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div>
+        <div style="font-size:10px;color:var(--text-muted);letter-spacing:.06em;">あなたの判定を待っている画像</div>
+        ${people>0
+          ? `<div style="font-size:18px;font-weight:900;color:var(--orange-light);margin-top:2px;">
+               ${people}<span style="font-size:12px;font-weight:700;"> 人</span>
+               <span style="font-size:12px;color:var(--text-muted);font-weight:400;margin:0 4px;">／</span>
+               ${imgs}<span style="font-size:12px;font-weight:700;"> 枚</span></div>`
+          : `<div style="font-size:14px;font-weight:700;color:var(--pass);margin-top:2px;">✓ 判定待ちはありません</div>`}
+      </div>
+      <button id="reviewer-refresh" onclick="refreshReviewerData()"
+        style="background:transparent;border:1px solid var(--border-light);color:var(--text-muted);
+        padding:6px 12px;border-radius:2px;font-size:11px;cursor:pointer;
+        font-family:'Noto Sans JP',sans-serif;white-space:nowrap;">↻ 最新の提出を読み込む</button>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+      <div style="display:flex;gap:6px;">
+        ${fbtn('all','全員')}
+        ${fbtn('pending',`判定待ちの人だけ（${people}）`)}
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">${kpCohortLegend()}</div>
+    </div>`;
+}
+
 function renderMemberList(){
+  renderReviewerSummary();
   const container=document.getElementById("member-list");
   container.innerHTML="";
-  MEMBERS.forEach(m=>{
+  const sorted=kpSortedMembers();
+  const withPending=sorted.filter(m=>kpPendingInfo(m.uid).n>0);
+  const rest=sorted.filter(m=>kpPendingInfo(m.uid).n===0);
+
+  const groupLabel=(text,color)=>{
+    const el=document.createElement("div");
+    el.style.cssText=`grid-column:1/-1;font-size:10.5px;font-weight:700;letter-spacing:.06em;
+      color:${color};margin:6px 0 0;display:flex;align-items:center;gap:8px;`;
+    el.innerHTML=`${text}<span style="flex:1;height:1px;background:var(--border);"></span>`;
+    container.appendChild(el);
+  };
+
+  const addCard=m=>{
     const pass=passCount(m.uid), total=totalViews();
     const pct=total>0?Math.round(pass/total*100):0;
+    const pend=kpPendingInfo(m.uid);
+    const coh=kpCohort(m);
     const div=document.createElement("div");
     div.className="member-card";
     div.dataset.uid=m.uid;
     div.onclick=()=>selectMember(m.uid);
+    div.style.borderLeft=`4px solid ${coh.color}`;
+    if(pend.n>0){
+      div.style.borderTopColor=div.style.borderRightColor=div.style.borderBottomColor='var(--pending-border)';
+      div.style.background='linear-gradient(90deg,rgba(232,160,32,.07),var(--card) 60%)';
+    }
     const loadedBadge=_imagesLoadedFor.has(m.uid)
       ?'<span style="font-size:9px;color:var(--text-dim);">✓読込済</span>'
-      :'<span style="font-size:9px;color:var(--text-dim);">タップで読込</span>';
+      :'';
+    const pendRow = pend.n>0
+      ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;">
+           <span style="display:inline-flex;align-items:center;gap:5px;background:var(--orange);color:var(--black);
+             font-size:11px;font-weight:900;padding:3px 9px;border-radius:2px;">● 判定待ち ${pend.n}枚</span>
+           <span style="font-size:10.5px;color:var(--orange-light);">${kpAgo(pend.oldest)}</span>
+         </div>`
+      : '';
     div.innerHTML=`
+      ${pendRow}
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-        <div style="width:32px;height:32px;border-radius:50%;background:var(--orange);
+        <div style="width:32px;height:32px;border-radius:50%;background:${coh.color};flex-shrink:0;
           display:flex;align-items:center;justify-content:center;
-          font-family:'Bebas Neue',sans-serif;font-size:15px;color:var(--black);">${m.name[0]}</div>
-        <div>
-          <div style="font-size:14px;font-weight:700;">${m.name}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${yearLabel(m.year)}</div>
+          font-family:'Bebas Neue',sans-serif;font-size:15px;color:var(--black);">${kpEsc((m.name||'？')[0])}</div>
+        <div style="min-width:0;">
+          <div style="font-size:14px;font-weight:700;">${kpEsc(m.name)}</div>
+          <div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <span>${yearLabel(m.year)}</span>${kpCohortChip(m)}
+          </div>
         </div>
-        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-          ${loadedBadge}
+        <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:3px;">
           ${pass===total?'<span class="done-badge">✓ 全Pass</span>':`<span class="tag">${pass}/${total} Pass</span>`}
+          ${loadedBadge}
         </div>
       </div>
       <div class="prog-track" style="height:6px;"><div class="prog-fill" style="width:${pct}%"></div></div>`;
     container.appendChild(div);
-  });
+  };
+
+  if(withPending.length>0){
+    groupLabel(`判定待ちあり（${withPending.length}人）　待ち時間が長い順`,'var(--orange)');
+    withPending.forEach(addCard);
+  }
+  if(_reviewFilter==='all' && rest.length>0){
+    groupLabel(`判定待ちなし（${rest.length}人）`,'var(--text-dim)');
+    rest.forEach(addCard);
+  }
+  if(_reviewFilter==='pending' && withPending.length===0){
+    const el=document.createElement("div");
+    el.style.cssText="grid-column:1/-1;font-size:12px;color:var(--text-muted);padding:14px 2px;";
+    el.textContent="判定待ちの画像はありません。";
+    container.appendChild(el);
+  }
 }
 
 // ================================================================
@@ -1536,7 +1782,7 @@ function renderMatrix(){
   const imageDomains=DOMAINS.filter(d=>!d.isPracticeLog && !d.isSimplePractice && d.views.length>0);
   const vascularDomain=DOMAINS.find(d=>d.isSimplePractice);
 
-  let headerRow1='<tr><th class="sticky-col" rowspan="3" style="min-width:80px;">部員</th>';
+  let headerRow1='<tr><th class="sticky-col" rowspan="3" style="min-width:80px;">部員</th><th rowspan="3" style="font-size:10px;color:var(--orange);">判定<br>待ち</th>';
   let headerRow2='';
   let headerRow3='';
 
@@ -1567,11 +1813,15 @@ function renderMatrix(){
 
   // データ行
   let bodyRows="";
-  MEMBERS.forEach(m=>{
+  kpSortedMembers().forEach(m=>{
     const prog=PROGRESS[m.uid];
     if(!prog) return;
+    const coh=kpCohort(m), pend=kpPendingInfo(m.uid);
     bodyRows+=`<tr>`;
-    bodyRows+=`<td class="sticky-col" style="cursor:pointer;" onclick="selectMember('${m.uid}')" title="クリックして画像を確認">${m.name}<br><span style="font-size:9px;color:var(--text-dim);">${m.year}年</span></td>`;
+    bodyRows+=`<td class="sticky-col" style="cursor:pointer;border-left:4px solid ${coh.color};" onclick="selectMember('${m.uid}')" title="クリックして画像を確認（${coh.label}）">${kpEsc(m.name)}<br><span style="font-size:9px;color:var(--text-dim);">${yearLabel(m.year)}</span></td>`;
+    bodyRows+= pend.n>0
+      ? `<td><span style="background:var(--orange);color:var(--black);font-size:10px;font-weight:900;padding:1px 6px;border-radius:2px;">${pend.n}</span></td>`
+      : `<td><span class="mx-ng">-</span></td>`;
 
     // セミナー
     DOMAINS.forEach(d=>{
@@ -1606,6 +1856,8 @@ function renderMatrix(){
     bodyRows+=`</tr>`;
   });
 
+  const lg=document.getElementById("matrix-cohort-legend");
+  if(lg) lg.innerHTML=`<span style="font-size:10.5px;color:var(--text-dim);">名前の左の色：</span>`+kpCohortLegend();
   container.innerHTML=`
     <table class="matrix-table">
       <thead>
@@ -1638,7 +1890,7 @@ async function refreshExamData(){
     if(error) throw error;
     if(profiles){
       MEMBERS.length=0;
-      profiles.forEach(pr=>MEMBERS.push({uid:pr.id,name:pr.name,year:pr.year||''}));
+      profiles.forEach(pr=>MEMBERS.push(kpMemberFromProfile(pr)));
       initProgress();
       initExamResults();
     }
@@ -1670,6 +1922,7 @@ function renderExamDayMemberList(){
     const certified=examAllPassed(m.uid);
     const div=document.createElement("div");
     div.className="member-card";
+    div.style.borderLeft=`4px solid ${kpCohort(m).color}`;
     div.onclick=()=>selectExamMember(m.uid);
     div.innerHTML=`
       <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -2144,7 +2397,7 @@ async function loadStorageUsage(){
 
     const list=MEMBERS.map(m=>({...m, n:count[m.uid]||0}))
       .filter(m=>m.n>0)
-      .sort((a,b)=>b.n-a.n);
+      .sort((a,b)=>(b.certified-a.certified) || (b.n-a.n));
 
     // 名簿にない人（退部・卒業などでprofilesから消えた分）
     const known=new Set(MEMBERS.map(m=>m.uid));
@@ -2178,13 +2431,18 @@ async function loadStorageUsage(){
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;
           padding:10px 12px;${i>0?'border-top:1px solid var(--border-light);':''}">
           <div style="min-width:0;">
-            <div style="font-size:12.5px;font-weight:700;">${kpEsc(m.name)}</div>
+            <div style="font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+              ${kpEsc(m.name)}
+              ${m.certified
+                ? '<span style="font-size:9.5px;color:var(--pass);border:1px solid var(--pass-border);padding:1px 6px;border-radius:2px;">認定済み</span>'
+                : '<span style="font-size:9.5px;color:var(--orange-light);border:1px solid var(--pending-border);padding:1px 6px;border-radius:2px;">途中（再開用に保存中）</span>'}
+            </div>
             <div style="font-size:10.5px;color:var(--text-dim);">${m.year?yearLabel(m.year)+' ・ ':''}${m.n}件 ・ 約${size}MB</div>
           </div>
           <button onclick="adminDeleteImages('${m.uid}','${kpEsc(m.name).replace(/'/g,'')}',${m.n})"
             style="flex-shrink:0;background:transparent;border:1px solid var(--border-light);
-            color:var(--text-muted);padding:5px 11px;border-radius:2px;font-size:11px;cursor:pointer;
-            font-family:'Noto Sans JP',sans-serif;white-space:nowrap;">画像を削除</button>
+            color:${m.certified?'var(--text-muted)':'var(--text-dim)'};padding:5px 11px;border-radius:2px;font-size:11px;cursor:pointer;
+            font-family:'Noto Sans JP',sans-serif;white-space:nowrap;">${m.certified?'画像を削除':'それでも削除'}</button>
         </div>`;
     });
     html+=`</div>`;
@@ -2201,6 +2459,13 @@ async function loadStorageUsage(){
 }
 
 async function adminDeleteImages(uid,name,n){
+  const mm=MEMBERS.find(x=>x.uid===uid);
+  if(mm && !mm.certified){
+    const pend=kpPendingInfo(uid).n;
+    if(!confirm(`${name} さんはまだ認定前（途中）です。\n\n次の試験で続きから再開できるように、画像は残しておく方針です。`
+      +(pend>0?`\n※判定待ちの画像が ${pend} 枚あります。消すと判定できなくなります。`:'')
+      +`\n\nそれでも削除しますか？`)) return;
+  }
   if(!confirm(`${name} さんの提出画像 ${n} 件を削除します。\n\n・Pass判定、試験結果、認定証はすべて残ります\n・削除した画像は元に戻せません\n\n削除してよろしいですか？`)) return;
   const done=await kpDeleteImages(uid);
   if(done===null) return;
@@ -2575,13 +2840,19 @@ async function selectMember(uid){
   await loadImagesForMember(uid);
   if(card){ card.style.opacity=''; card.style.pointerEvents=''; }
   document.getElementById("review-name").textContent=member.name;
+  kpUpdateReviewSub(uid);
   document.getElementById("review-area").style.display="block";
   document.getElementById("member-list").style.display="none";
+  const sumEl=document.getElementById("reviewer-summary");
+  if(sumEl) sumEl.style.display="none";
+  window.scrollTo({top:0});
   renderReviewDomains(uid);
 }
 function closeReview(){
   document.getElementById("review-area").style.display="none";
   document.getElementById("member-list").style.display="grid";
+  const sumEl=document.getElementById("reviewer-summary");
+  if(sumEl) sumEl.style.display="";
   renderMemberList();
   // 一覧表から開いていた場合は一覧表に戻る
   if(window._reviewReturnTo==="matrix"){
@@ -2591,10 +2862,51 @@ function closeReview(){
   }
 }
 
+// 確認画面：名前の下に「登録時期・判定待ちの枚数」を出す
+function kpUpdateReviewSub(uid){
+  const el=document.getElementById("review-sub");
+  const m=MEMBERS.find(x=>x.uid===uid);
+  if(!el||!m) return;
+  const n=kpPendingInfo(uid).n;
+  el.innerHTML=`<span style="display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    ${kpCohortChip(m)}
+    ${n>0?`<span style="color:var(--orange-light);font-weight:700;">● 判定待ち ${n}枚（オレンジ枠の画像）</span>`
+         :`<span style="color:var(--pass);">✓ 判定待ちなし</span>`}</span>`;
+}
+// あるドメインの、被検者ごとの判定待ちの枚数
+function kpPendingBySubject(uid,domain){
+  const prog=PROGRESS[uid]?.[domain.id];
+  if(!prog?.subjects || !domain.views?.length) return [0,0,0];
+  return [0,1,2].map(si=>domain.views.filter(v=>prog.subjects[si]?.views[v.id]?.status==='pending').length);
+}
+function kpReviewTabLabel(uid,domain,si){
+  const prog=PROGRESS[uid][domain.id];
+  const name=prog.subjects[si].name;
+  const base=name ? name.slice(5)||`被検者${si+1}` : `被検者${si+1}`;
+  const n=kpPendingBySubject(uid,domain)[si];
+  return n>0 ? `${base} <span style="color:var(--orange-light);">●${n}</span>` : base;
+}
+// 判定したあと、タブの数字・見出し・名前の下の表示を更新する
+function kpRefreshReviewCounts(uid,domainId){
+  const domain=DOMAINS.find(d=>d.id===domainId);
+  [0,1,2].forEach(si=>{
+    const tab=document.getElementById(`rvtab-${uid}-${domainId}-${si}`);
+    if(tab) tab.innerHTML=kpReviewTabLabel(uid,domain,si);
+  });
+  const total=kpPendingBySubject(uid,domain).reduce((a,b)=>a+b,0);
+  const h=document.getElementById(`rvpend-${uid}-${domainId}`);
+  if(h) h.innerHTML = total>0 ? `● 判定待ち ${total}枚` : '';
+  kpUpdateReviewSub(uid);
+}
+
 function renderReviewDomains(uid){
   const container=document.getElementById("review-domain-list");
   container.innerHTML="";
-  DOMAINS.forEach(domain=>{
+  // 判定待ちがあるドメインを上に並べる（同じ数なら元の順番のまま）
+  const pendTotal=d=>kpPendingBySubject(uid,d).reduce((a,b)=>a+b,0);
+  const ordered=DOMAINS.map((d,i)=>({d,i,n:pendTotal(d)}))
+    .sort((a,b)=>((b.n>0)-(a.n>0)) || (a.i-b.i)).map(x=>x.d);
+  ordered.forEach(domain=>{
     const prog=PROGRESS[uid]?.[domain.id];
     if(!prog) return;
     const sec=document.createElement("div");
@@ -2624,6 +2936,7 @@ function renderReviewDomains(uid){
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
           <span style="font-size:10px;color:var(--text-dim);">セミナー：</span>${seminarHTML}
         </div>
+        ${kpSeminarHistoryHTML(uid,domain.id)}
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">${statusBadge}</div>
         <div style="background:var(--dark);border:1px solid var(--border);border-radius:3px;padding:10px;">${datesHTML}</div>`;
       container.appendChild(sec);
@@ -2638,18 +2951,21 @@ function renderReviewDomains(uid){
         : `<span style="background:var(--border);border:1px solid var(--border-light);color:var(--text-muted);font-size:10px;padding:2px 6px;border-radius:2px;">未受講</span>`;
       sec.innerHTML=`
         <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--orange);">${domain.icon} ${domain.name}</div>
-        <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:10px;color:var(--text-dim);">セミナー：</span>${badge}</div>`;
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><span style="font-size:10px;color:var(--text-dim);">セミナー：</span>${badge}</div>
+        ${kpSeminarHistoryHTML(uid,domain.id)}`;
       container.appendChild(sec);
       return;
     }
 
     // 通常ドメイン（画像あり）
+    // 判定待ちがある被検者のタブを最初に開いておく
+    const pendBySubj=kpPendingBySubject(uid,domain);
+    const firstSi=Math.max(0,pendBySubj.findIndex(n=>n>0));
+    const domPend=pendBySubj.reduce((a,b)=>a+b,0);
     const tabsHTML=[0,1,2].map(si=>{
-      const name=prog.subjects[si].name;
-      const label=name ? name.slice(5)||`被検者${si+1}` : `被検者${si+1}`;
       return `<button id="rvtab-${uid}-${domain.id}-${si}"
-        class="subject-tab ${si===0?'active':''}"
-        onclick="switchReviewSubject('${uid}','${domain.id}',${si})">${label}</button>`;
+        class="subject-tab ${si===firstSi?'active':''}"
+        onclick="switchReviewSubject('${uid}','${domain.id}',${si})">${kpReviewTabLabel(uid,domain,si)}</button>`;
     }).join("");
 
     const panelsHTML=[0,1,2].map(si=>{
@@ -2660,7 +2976,7 @@ function renderReviewDomains(uid){
         const isPassed = vs.status === 'pass';
         const isKept = vs.status === 'keep';
         return `
-          <div class="rev-img-card" id="rvic-${uid}-${domain.id}-${si}-${view.id}">
+          <div class="rev-img-card ${vs.status==='pending'?'is-pending':''}" id="rvic-${uid}-${domain.id}-${si}-${view.id}">
             <div class="rev-img-top">
               ${hasImg
                 ?`<img src="${vs.fileDataUrl}" style="width:100%;height:100%;object-fit:cover;">`
@@ -2688,7 +3004,7 @@ function renderReviewDomains(uid){
         ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">撮像日：<span style="color:var(--orange);font-weight:700;">${captureDate}</span></div>`
         : `<div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">撮像日：未入力</div>`;
       const practiceHTML=renderPracticeDatesReadonlyHTML(prog.subjects[si].practiceDates);
-      return `<div id="rvpanel-${uid}-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
+      return `<div id="rvpanel-${uid}-${domain.id}-${si}" class="subject-panel ${si===firstSi?'active':''}">
         ${captureDateHTML}
         <div class="rev-img-grid">${viewsHTML}</div>
         ${practiceHTML}
@@ -2696,7 +3012,17 @@ function renderReviewDomains(uid){
     }).join("");
 
     sec.innerHTML=`
-      <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--orange);">${domain.icon} ${domain.name}</div>
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--orange);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span>${domain.icon} ${domain.name}</span>
+        <span id="rvpend-${uid}-${domain.id}" style="font-size:11px;color:var(--black);background:${domPend>0?'var(--orange)':'transparent'};
+          padding:${domPend>0?'2px 8px':'0'};border-radius:2px;">${domPend>0?`● 判定待ち ${domPend}枚`:''}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <span style="font-size:10px;color:var(--text-dim);">セミナー：</span>${(()=>{const l=seminarLabel(uid,domain);
+          return l?`<span style="background:var(--pass-bg);border:1px solid var(--pass-border);color:var(--pass);font-size:10px;font-weight:700;padding:2px 7px;border-radius:2px;">✓ ${l}</span>`
+                  :`<span style="background:var(--border);border:1px solid var(--border-light);color:var(--text-muted);font-size:10px;padding:2px 6px;border-radius:2px;">未受講</span>`;})()}
+      </div>
+      ${kpSeminarHistoryHTML(uid,domain.id)}
       <div class="subject-tabs">${tabsHTML}</div>
       ${panelsHTML}`;
     container.appendChild(sec);
@@ -2718,9 +3044,11 @@ async function reviewSet(uid,domainId,si,viewId,status){
   const comment=cmt?cmt.value:"";
   const vs=PROGRESS[uid][domainId].subjects[si].views[viewId];
   const feedback=comment||(status==="pass"?"よく描出できています！":"もう一度練習してみてください。");
-  vs.status=status; vs.feedback=feedback;
+  vs.status=status; vs.feedback=feedback; vs.updatedAt=new Date().toISOString();
   const rvst=document.getElementById(`rvst-${uid}-${domainId}-${si}-${viewId}`);
   if(rvst){rvst.className=SC[status];rvst.textContent=SL[status];}
+  document.getElementById(`rvic-${uid}-${domainId}-${si}-${viewId}`)?.classList.remove('is-pending');
+  kpRefreshReviewCounts(uid,domainId);
   // Pass時はtextareaを非表示、Keep時は表示してフィードバックを促す
   if(cmt){
     if(status==="pass"){
@@ -3022,9 +3350,15 @@ async function saveSubmissionToDB(uid,domainId,si,viewId,status,feedback,imageUr
 
 async function saveSeminarToDB(uid,domainId,seminarIdx){
   const {error}=await _supabase.from('seminar_attendance').upsert({
-    uid, domain_id:domainId, seminar_idx:seminarIdx+SEM_OFFSET, updated_at:new Date().toISOString(),
+    uid, domain_id:domainId, seminar_idx:seminarIdx+kpSemOffset(), updated_at:new Date().toISOString(),
   },{onConflict:'uid,domain_id'});
-  if(error) showToast('セミナー情報の保存に失敗しました','error');
+  if(error){ showToast('セミナー情報の保存に失敗しました','error'); return; }
+  // 受講歴の記録（上書きされない控え）。テーブルが無くても動作は止めない
+  try{
+    await _supabase.from('seminar_log').insert({
+      uid, domain_id:domainId, seminar_idx:seminarIdx+kpSemOffset(),
+    });
+  }catch(e){}
 }
 
 // ※Supabaseはデータベース側のエラーで例外を投げず {error} を返す。
@@ -3174,10 +3508,10 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     if(role==='reviewer'){
       const {data:profiles}=await _supabase.from('profiles').select('*').eq('role','member');
       MEMBERS.length=0;
-      if(profiles) profiles.forEach(p=>MEMBERS.push({uid:p.id,name:p.name,year:p.year||''}));
+      if(profiles) profiles.forEach(p=>MEMBERS.push(kpMemberFromProfile(p)));
     } else {
       MEMBERS.length=0;
-      MEMBERS.push({uid:user.id,name,year});
+      MEMBERS.push({...kpMemberFromProfile(profile||{id:user.id}), name, year});
     }
 
     // 部員ページのプロフィール表示
@@ -3276,7 +3610,7 @@ async function loadFromDB(){
     // ── 確認者モード：画像URL(image_url)は除外して軽量読み込み ──
     // 画像は部員カードをクリックしたときに個別取得する
     const subCols = role==='reviewer'
-      ? 'uid,domain_id,subject_idx,view_id,status,feedback'
+      ? 'uid,domain_id,subject_idx,view_id,status,feedback,updated_at'
       : '*';
     // 部員は自分の行だけ、確認者は全員分。いずれも500件ずつ分割して全件取得する。
     const mk = (table, cols) => {
@@ -3309,14 +3643,19 @@ async function loadFromDB(){
     if(seminars) seminars.forEach(row=>{
       const prog=PROGRESS[row.uid]?.[row.domain_id];
       if(!prog) return;
-      if(row.seminar_idx>=SEM_OFFSET){
-        prog.seminarSelected=row.seminar_idx-SEM_OFFSET;       // 今回（2027年3月期）の受講
-      } else {
-        prog.legacySeminar=row.seminar_idx; prog.legacyFrom=row.domain_id;   // 前回（8月期）の受講
-        // 前回の「心臓・肺・下肢静脈」は今回の「肺・下肢静脈」にも反映
-        if(row.domain_id==='cardiac' && PROGRESS[row.uid]?.lung){
-          PROGRESS[row.uid].lung.legacySeminar=row.seminar_idx;
-          PROGRESS[row.uid].lung.legacyFrom='cardiac';
+      const term=Math.floor(row.seminar_idx/10), idx=row.seminar_idx%10;
+      const setPast=(pg,from)=>{
+        // 前の期の記録が複数あれば、いちばん新しい期のものを表示に使う
+        if(pg.legacyTerm!=null && pg.legacyTerm>term) return;
+        pg.legacySeminar=idx; pg.legacyTerm=term; pg.legacyFrom=from;
+      };
+      if(term===KP_CONFIG.termNo){
+        prog.seminarSelected=idx;                    // 今の期の受講
+      } else if(term<KP_CONFIG.termNo){
+        setPast(prog,row.domain_id);                 // 前の期の受講（受講済みとして引き継ぐ）
+        // 第0期の「心臓・肺・下肢静脈」は今の「肺・下肢静脈」にも反映
+        if(term===0 && row.domain_id==='cardiac' && PROGRESS[row.uid]?.lung){
+          setPast(PROGRESS[row.uid].lung,'cardiac');
         }
       }
     });
@@ -3337,6 +3676,7 @@ async function loadFromDB(){
       if(!subj?.views[row.view_id]) return;
       subj.views[row.view_id].status=row.status;
       subj.views[row.view_id].feedback=row.feedback||'';
+      subj.views[row.view_id].updatedAt=row.updated_at||null;
       // 確認者モードは image_url を含まないクエリのため undefined のまま（後で個別取得）
       if(row.image_url !== undefined) subj.views[row.view_id].fileDataUrl=row.image_url?await kpSign(row.image_url):null;
     }));
@@ -3370,6 +3710,31 @@ async function loadFromDB(){
 // ================================================================
 // 確認者用：特定部員の画像URLだけを個別取得してPROGRESSに反映
 // ================================================================
+// セミナー受講歴（確認画面で表示）
+const SEMINAR_LOG = {};
+function kpSeminarIdxLabel(domainId, seminarIdx){
+  const term=Math.floor(seminarIdx/10), idx=seminarIdx%10;
+  if(term===KP_CONFIG.termNo){
+    const d=DOMAINS.find(x=>x.id===domainId);
+    return '今回 '+(d?.seminarDates?.[idx]||'受講');
+  }
+  const arr=SEMINAR_HISTORY[term]?.dates?.[domainId];
+  return kpTermName(term)+' '+(arr?.[idx]||'受講');
+}
+// あるドメインの受講歴（重複を除いて、受講した順）
+function kpSeminarHistoryHTML(uid, domainId){
+  const logs=(SEMINAR_LOG[uid]||[]).filter(r=>r.domain_id===domainId
+    || (domainId==='lung' && r.domain_id==='cardiac' && Math.floor(r.seminar_idx/10)===0));
+  const seen=new Set(), labels=[];
+  logs.forEach(r=>{
+    const key=r.domain_id+'|'+r.seminar_idx;
+    if(seen.has(key)) return; seen.add(key);
+    labels.push(kpSeminarIdxLabel(r.domain_id, r.seminar_idx));
+  });
+  if(labels.length<2) return '';   // 1回だけなら上のバッジで分かるので出さない
+  return `<div style="font-size:10.5px;color:var(--text-dim);margin:-2px 0 8px;">受講歴：${labels.map(kpEsc).join(' → ')}</div>`;
+}
+
 // 一度取得した部員のUIDを記録しておく（2回目以降は再取得しない）
 const _imagesLoadedFor = new Set();
 
@@ -3387,6 +3752,12 @@ async function loadImagesForMember(uid){
       if(!subj?.views[row.view_id]) return;
       subj.views[row.view_id].fileDataUrl=row.image_url?await kpSign(row.image_url):null;
     }));
+    // セミナーの受講歴（seminar_logが無い場合は表示しないだけ）
+    try{
+      const {data:logs,error:le}=await _supabase.from('seminar_log')
+        .select('domain_id,seminar_idx,created_at').eq('uid',uid).order('created_at');
+      if(!le) SEMINAR_LOG[uid]=logs||[];
+    }catch(e){}
   } catch(e){
     // 取得失敗してもクラッシュしない。次回クリック時に再試行できるようSetから除外
     _imagesLoadedFor.delete(uid);
