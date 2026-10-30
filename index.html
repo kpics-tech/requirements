@@ -536,13 +536,10 @@ const DOMAINS = [
   },
   {
     id:"bowel", name:"排泄ケアエコー", icon:"🔬",
-    subtitle:"下腹部横断像（短軸・長軸）＋ 下行結腸短軸（画像は任意の自主練）",
+    subtitle:"排泄ケアエコー（セミナー受講のみ）",
     seminarDates:["11/11（水）","3/9（火）","3/17（水）","個別レクチャー受講済み"],
-    views:[
-      {id:"bowel_transverse_s", label:"下腹部横断像（短軸）", refKey:"bowel_tbd"},
-      {id:"bowel_transverse_l", label:"下腹部横断像（長軸）", refKey:"bowel_tbd"},
-      {id:"bowel_descending",   label:"下行結腸（短軸）",     refKey:"bowel_tbd"},
-    ]
+    views:[],
+    isSeminarOnly:true,   // 画像提出なし・セミナー受講だけ（以前に上げた画像はデータとして残る）
   },
 ];
 
@@ -1013,7 +1010,8 @@ function kpAgo(iso){
   if(h<24) return Math.floor(h)+'時間前から';
   return Math.floor(h/24)+'日前から';
 }
-// 確認者画面の並び順：判定待ちがある人が上（待ち時間が長い人ほど上）→ 残りは登録時期・名前順
+// 確認者画面・一覧表の並び順：判定待ちがある人が上（登録時期に関係なく、待ち時間が長い人ほど上）
+//   → 残りは新しく登録したグループが上 → 名前順
 function kpSortedMembers(){
   return MEMBERS.slice().sort((a,b)=>{
     const pa=kpPendingInfo(a.uid), pb=kpPendingInfo(b.uid);
@@ -1023,8 +1021,10 @@ function kpSortedMembers(){
       if(!!pa.oldest!==!!pb.oldest) return pa.oldest ? -1 : 1;
       if(pa.n!==pb.n) return pb.n-pa.n;
     }
+    // 判定待ちがない人は、新しく登録した人ほど上（登録日不明はいちばん下）
     const ca=kpCohort(a).idx, cb=kpCohort(b).idx;
-    if(ca!==cb) return ca-cb;
+    const ra=ca===KP_COHORT_UNKNOWN.idx ? -1 : ca, rb=cb===KP_COHORT_UNKNOWN.idx ? -1 : cb;
+    if(ra!==rb) return rb-ra;
     return String(a.name||'').localeCompare(String(b.name||''),'ja');
   });
 }
